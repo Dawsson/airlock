@@ -12,17 +12,19 @@ Tests ──┘                            └── App (Device)
 
 ### With AI
 
-Install the [skill](https://skills.sh), then ask your agent to set up hotline in your project:
+Add the [skill](https://skills.sh) to your agent, then tell it to set up hotline:
 
 ```bash
 npx skills add Dawsson/hotline
 ```
 
+Then in your AI agent's chat:
+
 ```
-> Set up hotline in this project
+Set up hotline in this project
 ```
 
-Your agent will install the package, create the provider, register handlers, and wire everything up.
+It will install the package, create the provider, register handlers, and wire everything up for you.
 
 ### Manual
 
