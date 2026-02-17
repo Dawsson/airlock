@@ -148,7 +148,7 @@ export function useHotline(options: HotlineOptions): Hotline {
     throw new Error("useHotline requires React")
   }
 
-  const ref = useRef<Hotline | null>(null)
+  const ref = useRef(null) as { current: Hotline | null }
 
   if (!ref.current) {
     ref.current = createHotline(options)
