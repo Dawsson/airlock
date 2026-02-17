@@ -1,18 +1,6 @@
 # hotline
 
-Local WebSocket dev bridge for React Native apps. Let AI agents send commands to and query state from your running app.
-
-```bash
-npx skills add Dawsson/hotline
-```
-
-Works with Claude Code, Cursor, Windsurf, and [other agents](https://skills.sh). Once installed, just ask your agent to integrate hotline — it handles the rest.
-
----
-
-## How it works
-
-Your app connects to a local WebSocket server. Agents and CLI tools send commands through it.
+Let agents talk to your React Native and Expo apps.
 
 ```
 Agent ──┐                            ┌── App (Simulator 1)
@@ -22,11 +10,25 @@ Tests ──┘                            └── App (Device)
 
 ## Install
 
+### With AI
+
+Install the [skill](https://skills.sh), then ask your agent to set up hotline in your project:
+
+```bash
+npx skills add Dawsson/hotline
+```
+
+```
+> Set up hotline in this project
+```
+
+Your agent will install the package, create the provider, register handlers, and wire everything up.
+
+### Manual
+
 ```bash
 bun add @dawsson/hotline
 ```
-
-## Setup
 
 Add the hook to your app and register handlers:
 
