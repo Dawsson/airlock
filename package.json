@@ -1,0 +1,19 @@
+{
+  "name": "hotline",
+  "version": "0.1.0",
+  "description": "Local WebSocket dev bridge for React Native apps",
+  "type": "module",
+  "bin": {
+    "hotline": "src/cli.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "start": "bun run src/server.ts"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "bun-types": "^1.3.9"
+  }
+}
