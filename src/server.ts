@@ -14,11 +14,13 @@ import {
 
 const apps = new Map<ServerWebSocket<ClientData>, AppConnection>()
 const watchers = new Set<ServerWebSocket<ClientData>>()
+const waiters = new Set<ServerWebSocket<ClientData>>()
 const pendingRequests = new Map<string, PendingRequest>()
 
 interface ClientData {
-  role: "app" | "cli" | "watch"
+  role: "app" | "cli" | "watch" | "wait"
   appId?: string // for apps: their id; for cli: target app id
+  waitEvent?: string // for wait: which event to listen for
 }
 
 function log(msg: string) {
@@ -148,9 +150,14 @@ const server = Bun.serve<ClientData>({
     const url = new URL(req.url)
     const role = url.searchParams.get("role")
     const appId = url.searchParams.get("app") || undefined
+    const waitEvent = url.searchParams.get("event") || undefined
+
+    let clientRole: ClientData["role"] = "cli"
+    if (role === "watch") clientRole = "watch"
+    else if (role === "wait") clientRole = "wait"
 
     const upgraded = server.upgrade(req, {
-      data: { role: (role === "watch" ? "watch" : "cli") as any, appId },
+      data: { role: clientRole, appId, waitEvent },
     })
 
     if (!upgraded) {
@@ -163,6 +170,9 @@ const server = Bun.serve<ClientData>({
       if (ws.data.role === "watch") {
         watchers.add(ws)
         log("Watcher connected")
+      } else if (ws.data.role === "wait") {
+        waiters.add(ws)
+        log(`Waiter connected (event: ${ws.data.waitEvent})`)
       }
     },
 
@@ -182,6 +192,26 @@ const server = Bun.serve<ClientData>({
         apps.set(ws, conn)
         log(`App registered: ${msg.appId}${msg.handlers ? ` (${msg.handlers.length} handlers)` : ""}`)
         broadcast({ dir: "req", appId: msg.appId, msg: { type: "register", appId: msg.appId, handlers: msg.handlers } })
+        return
+      }
+
+      // Event from app → broadcast to watchers + deliver to waiting CLIs
+      if (msg.type === "event" && msg.event && ws.data.role === "app") {
+        const appInfo = apps.get(ws)
+        const event = { type: "event", event: msg.event, appId: appInfo?.appId, data: msg.data }
+        const payload = JSON.stringify(event)
+
+        // Broadcast to watchers (shows in stream)
+        for (const w of watchers) w.send(payload)
+
+        // Deliver to matching waiters and close them
+        for (const w of waiters) {
+          if (w.data.waitEvent === msg.event && (!w.data.appId || w.data.appId === appInfo?.appId)) {
+            w.send(payload)
+            w.close()
+            waiters.delete(w)
+          }
+        }
         return
       }
 
@@ -248,6 +278,8 @@ const server = Bun.serve<ClientData>({
       } else if (ws.data.role === "watch") {
         watchers.delete(ws)
         log("Watcher disconnected")
+      } else if (ws.data.role === "wait") {
+        waiters.delete(ws)
       }
     },
   },

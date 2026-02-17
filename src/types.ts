@@ -33,7 +33,14 @@ export interface HotlineRegister {
   handlers: HandlerSchema[]
 }
 
-export type HotlineMessage = HotlineRequest | HotlineResponse | HotlineRegister
+export interface HotlineEvent {
+  type: "event"
+  event: string
+  appId?: string
+  data?: unknown
+}
+
+export type HotlineMessage = HotlineRequest | HotlineResponse | HotlineRegister | HotlineEvent
 
 // ── Server internals ──
 

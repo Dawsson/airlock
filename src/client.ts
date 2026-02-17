@@ -19,6 +19,7 @@ export interface Hotline {
   connect(): void
   disconnect(): void
   handle(type: string, config: HandlerConfig): void
+  emit(event: string, data?: unknown): void
 }
 
 // ── Client ──
@@ -142,7 +143,11 @@ export function createHotline(options: HotlineOptions): Hotline {
     registerHandler(type, config)
   }
 
-  return { connect, disconnect, handle }
+  function emit(event: string, data?: unknown) {
+    ws?.send(JSON.stringify({ type: "event", event, data }))
+  }
+
+  return { connect, disconnect, handle, emit }
 }
 
 // ── React Hook ──
