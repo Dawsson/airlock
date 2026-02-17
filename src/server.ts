@@ -45,36 +45,45 @@ function listAppIds(): string[] {
   return [...new Set([...apps.values()].map((a) => a.appId))]
 }
 
-// ── Built-in commands ──
+// ── Server handlers ──
 
-function handleBuiltIn(
+type ServerHandler = (payload: Record<string, unknown>) => any | Promise<any>
+const serverHandlers = new Map<string, ServerHandler>()
+
+export function handle(type: string, fn: ServerHandler) {
+  serverHandlers.set(type, fn)
+}
+
+// Built-in handlers
+handle("ping", () => ({}))
+
+handle("list-apps", () => {
+  const appList = [...apps.values()].map((a) => ({
+    appId: a.appId,
+    connectedAt: a.connectedAt,
+  }))
+  return {
+    port,
+    pid: process.pid,
+    uptime: Math.floor(process.uptime()),
+    apps: appList,
+  }
+})
+
+async function handleServerCommand(
   ws: ServerWebSocket<ClientData>,
   msg: HotlineRequest
-): boolean {
-  if (msg.type === "ping") {
-    send(ws, { id: msg.id, ok: true })
-    return true
-  }
+): Promise<boolean> {
+  const handler = serverHandlers.get(msg.type)
+  if (!handler) return false
 
-  if (msg.type === "list-apps") {
-    const appList = [...apps.values()].map((a) => ({
-      appId: a.appId,
-      connectedAt: a.connectedAt,
-    }))
-    send(ws, {
-      id: msg.id,
-      ok: true,
-      data: {
-        port,
-        pid: process.pid,
-        uptime: Math.floor(process.uptime()),
-        apps: appList,
-      },
-    })
-    return true
+  try {
+    const result = await handler(msg.payload ?? {})
+    send(ws, { id: msg.id, ok: true, data: result ?? null })
+  } catch (err: any) {
+    send(ws, { id: msg.id, ok: false, error: err?.message ?? "Server handler error" })
   }
-
-  return false
+  return true
 }
 
 function send(ws: ServerWebSocket<ClientData>, data: HotlineResponse) {
@@ -142,7 +151,7 @@ const server = Bun.serve<ClientData>({
       }
     },
 
-    message(ws, raw) {
+    async message(ws, raw) {
       let msg: any
       try {
         msg = JSON.parse(typeof raw === "string" ? raw : new TextDecoder().decode(raw))
@@ -175,8 +184,8 @@ const server = Bun.serve<ClientData>({
 
       // Request from CLI → route to app
       if (msg.id && msg.type) {
-        // Built-in commands (no app needed)
-        if (handleBuiltIn(ws, msg)) return
+        // Server-handled commands (no app needed)
+        if (await handleServerCommand(ws, msg)) return
 
         const targetAppId = ws.data.appId
         const appSocket = findAppSocket(targetAppId)
