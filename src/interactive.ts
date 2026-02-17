@@ -121,34 +121,54 @@ export async function interactiveWatch(port: number = DEFAULT_PORT) {
   function fetchApps() {
     const url = `ws://localhost:${port}`
     const fetchWs = new WebSocket(url)
-    const id = crypto.randomUUID()
+    const handlersId = crypto.randomUUID()
+    const fallbackId = crypto.randomUUID()
 
     fetchWs.addEventListener("open", () => {
-      fetchWs.send(JSON.stringify({ id, type: "list-handlers" }))
+      fetchWs.send(JSON.stringify({ id: handlersId, type: "list-handlers" }))
     })
 
     fetchWs.addEventListener("message", (event) => {
       try {
         const data = JSON.parse(String(event.data))
-        if (data.id === id && data.ok) {
-          apps.length = 0
-          for (const app of data.data as AppInfo[]) {
-            apps.push(app)
-          }
-          // Reset selection if current index is out of bounds
-          if (appIndex >= apps.length) appIndex = Math.max(0, apps.length - 1)
-          // Auto-select if only one app
-          if (apps.length === 1 && mode === "selecting-app") {
-            mode = "selecting-command"
-            cmdIndex = 0
-          }
-          render()
+
+        // list-handlers succeeded
+        if (data.id === handlersId && data.ok) {
+          applyApps(data.data as AppInfo[])
+          fetchWs.close()
+          return
+        }
+
+        // list-handlers failed — fall back to list-apps
+        if (data.id === handlersId && !data.ok) {
+          fetchWs.send(JSON.stringify({ id: fallbackId, type: "list-apps" }))
+          return
+        }
+
+        // list-apps response
+        if (data.id === fallbackId && data.ok) {
+          const appList = (data.data?.apps ?? []) as { appId: string }[]
+          applyApps(appList.map((a) => ({ appId: a.appId, handlers: [] })))
+          fetchWs.close()
+          return
         }
       } catch {}
-      fetchWs.close()
     })
 
     fetchWs.addEventListener("error", () => {})
+  }
+
+  function applyApps(newApps: AppInfo[]) {
+    apps.length = 0
+    for (const app of newApps) {
+      apps.push(app)
+    }
+    if (appIndex >= apps.length) appIndex = Math.max(0, apps.length - 1)
+    if (apps.length === 1 && mode === "selecting-app") {
+      mode = "selecting-command"
+      cmdIndex = 0
+    }
+    render()
   }
 
   // Send a command via a short-lived CLI connection
