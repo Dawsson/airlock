@@ -109,6 +109,30 @@ async function stop() {
   console.error("Server stopped.")
 }
 
+async function restart() {
+  const pid = readPid()
+  if (pid) {
+    process.kill(pid, "SIGTERM")
+    console.error("Killed old server.")
+    // Wait for launchd to relaunch (KeepAlive: true)
+    let attempts = 0
+    while (attempts < 20) {
+      await new Promise((r) => setTimeout(r, 250))
+      const newPid = readPid()
+      if (newPid && newPid !== pid) {
+        console.error(`Server restarted (pid ${newPid}).`)
+        return
+      }
+      attempts++
+    }
+    console.error("Server killed. Launchd should relaunch it shortly.")
+  } else {
+    // No running server — just start it
+    console.error("No running server. Starting...")
+    await start()
+  }
+}
+
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
@@ -324,7 +348,7 @@ async function logs() {
   await proc.exited
 }
 
-const COMMANDS = ["status", "start", "stop", "cmd", "query", "watch", "wait", "setup", "teardown", "logs"]
+const COMMANDS = ["status", "start", "stop", "restart", "cmd", "query", "watch", "wait", "setup", "teardown", "logs"]
 
 function closestCommand(input: string): string | null {
   let best: string | null = null
@@ -366,6 +390,7 @@ function usage(): never {
 Commands:
   start [--daemon]          Start server (foreground or background)
   stop                      Stop daemonized server
+  restart                   Kill and relaunch server (picks up new code)
   status                    Show connected apps
   cmd <type> [--key val]    Send command to app (inline args or --payload)
   query <key>               Shorthand for get-state command
@@ -390,6 +415,9 @@ switch (command) {
     break
   case "stop":
     await stop()
+    break
+  case "restart":
+    await restart()
     break
   case "status":
     await status()
