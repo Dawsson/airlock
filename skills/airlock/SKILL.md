@@ -16,6 +16,7 @@ Self-hosted Expo OTA update server. Ships as a Hono library (`createAirlock`) yo
 
 - `references/cli.md` — Full CLI reference: all commands, flags, and config
 - `references/integration.md` — How to mount airlock on a Hono server and configure an Expo app
+- `references/alchemy.md` — Deploying with Alchemy (recommended): provisioning KV + R2 + Worker, generating secure tokens, existing vs new resources
 
 ## Quick Reference
 
