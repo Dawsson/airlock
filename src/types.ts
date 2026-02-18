@@ -128,8 +128,22 @@ export interface StorageAdapter {
 
 /** Configuration for createAirlock() */
 export type AirlockConfig = {
-  adapter: StorageAdapter;
-  adminToken?: string;
+  /**
+   * Storage adapter instance, or a factory called per-request with the runtime env.
+   * Use a factory for Cloudflare Workers where bindings are only available per-request:
+   *
+   * ```ts
+   * adapter: (env: Env) => new CloudflareAdapter({ kv: env.OTA_KV, r2: env.OTA_R2, r2PublicUrl: env.R2_URL })
+   * ```
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adapter: StorageAdapter | ((env: any) => StorageAdapter);
+  /**
+   * Admin bearer token, or a factory called per-request with the runtime env.
+   * Omit to allow unauthenticated admin access (not recommended for production).
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  adminToken?: string | ((env: any) => string | undefined);
   resolveUpdate?: (
     update: StoredUpdate,
     context: UpdateContext

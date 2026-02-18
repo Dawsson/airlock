@@ -574,6 +574,133 @@ describe("airlock", () => {
   });
 });
 
+// ─── Adapter factory ─────────────────────────────────────────────────
+
+describe("adapter factory", () => {
+  test("factory is called per-request", async () => {
+    const adapter = new MemoryAdapter();
+    let callCount = 0;
+
+    const airlock = createAirlock({
+      adapter: (_env: unknown) => {
+        callCount++;
+        return adapter;
+      },
+    });
+
+    const factoryApp = new Hono();
+    factoryApp.route("/", airlock.routes);
+
+    await factoryApp.request("/manifest", {
+      headers: { "expo-platform": "ios", "expo-runtime-version": "1.0.0" },
+    });
+    expect(callCount).toBe(1);
+
+    // Second request — factory called again
+    await factoryApp.request("/assets/missing");
+    expect(callCount).toBe(2);
+  });
+
+  test("factory adminToken is resolved per-request", async () => {
+    const airlock = createAirlock({
+      adapter: new MemoryAdapter(),
+      adminToken: (env: unknown) => (env as { ADMIN: string })?.ADMIN ?? "dynamic-token",
+    });
+
+    const factoryApp = new Hono();
+    factoryApp.route("/", airlock.routes);
+
+    // Wrong token — should 401
+    const res401 = await factoryApp.request("/admin/updates?runtimeVersion=1.0.0&platform=ios", {
+      headers: { Authorization: "Bearer wrong" },
+    });
+    expect(res401.status).toBe(401);
+
+    // Correct resolved token — should 200
+    const res200 = await factoryApp.request("/admin/updates?runtimeVersion=1.0.0&platform=ios", {
+      headers: { Authorization: "Bearer dynamic-token" },
+    });
+    expect(res200.status).toBe(200);
+  });
+});
+
+// ─── mount() ─────────────────────────────────────────────────────────
+
+describe("mount()", () => {
+  test("strips basePath prefix from request URL", async () => {
+    const adapter = new MemoryAdapter();
+    await adapter.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+
+    const airlock = createAirlock({ adapter });
+    const handler = airlock.mount("/ota");
+
+    const res = await handler(
+      new Request("https://api.example.com/ota/manifest", {
+        headers: {
+          "expo-platform": "ios",
+          "expo-runtime-version": "1.0.0",
+        },
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("strips basePath with trailing slash", async () => {
+    const adapter = new MemoryAdapter();
+    const airlock = createAirlock({ adapter });
+    const handler = airlock.mount("/ota/");
+
+    const res = await handler(
+      new Request("https://api.example.com/ota/manifest", {
+        headers: {
+          "expo-platform": "ios",
+          "expo-runtime-version": "1.0.0",
+        },
+      })
+    );
+    expect(res.status).toBe(204); // no updates, but routing worked (not 404)
+  });
+
+  test("preserves request method and headers for admin routes", async () => {
+    const adapter = new MemoryAdapter();
+    const airlock = createAirlock({ adapter, adminToken: "tok" });
+    const handler = airlock.mount("/ota");
+
+    const res = await handler(
+      new Request("https://api.example.com/ota/admin/updates?runtimeVersion=1.0.0&platform=ios", {
+        method: "GET",
+        headers: { Authorization: "Bearer tok" },
+      })
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("passes env to adapter factory when called from mount()", async () => {
+    const adapter = new MemoryAdapter();
+    let envReceived: unknown;
+
+    const airlock = createAirlock({
+      adapter: (env: unknown) => {
+        envReceived = env;
+        return adapter;
+      },
+    });
+    const handler = airlock.mount("/ota");
+
+    const fakeEnv = { MY_BINDING: "hello" };
+    await handler(
+      new Request("https://api.example.com/ota/manifest", {
+        headers: {
+          "expo-platform": "ios",
+          "expo-runtime-version": "1.0.0",
+        },
+      }),
+      fakeEnv
+    );
+    expect(envReceived).toBe(fakeEnv);
+  });
+});
+
 // ─── Code signing tests ────────────────────────────────────────────
 
 import { generateKeyPair } from "./crypto";

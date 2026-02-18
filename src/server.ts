@@ -3,6 +3,7 @@ import type {
   AirlockConfig,
   AirlockEvent,
   Platform,
+  StorageAdapter,
   StoredUpdate,
   UpdateContext,
 } from "./types";
@@ -20,9 +21,17 @@ function emit(config: AirlockConfig, event: AirlockEvent) {
   }
 }
 
-function requireAuth(config: AirlockConfig, header: string | undefined) {
-  if (!config.adminToken) return true;
-  const expected = `Bearer ${config.adminToken}`;
+function resolveAdapter(config: AirlockConfig, env: unknown): StorageAdapter {
+  return typeof config.adapter === "function" ? config.adapter(env) : config.adapter;
+}
+
+function resolveAdminToken(config: AirlockConfig, env: unknown): string | undefined {
+  return typeof config.adminToken === "function" ? config.adminToken(env) : config.adminToken;
+}
+
+function requireAuth(adminToken: string | undefined, header: string | undefined) {
+  if (!adminToken) return true;
+  const expected = `Bearer ${adminToken}`;
   if (!header || header.length !== expected.length) return false;
   // Constant-time comparison to prevent timing attacks
   const a = new TextEncoder().encode(header);
@@ -38,6 +47,7 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Public: manifest ──────────────────────────────────────────────
 
   app.get("/manifest", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const platform = (c.req.header("expo-platform") ??
       c.req.query("platform")) as Platform | undefined;
     const runtimeVersion =
@@ -56,7 +66,7 @@ export function createAirlock(config: AirlockConfig) {
       );
     }
 
-    const update = await config.adapter.getLatestUpdate(
+    const update = await adapter.getLatestUpdate(
       channel,
       runtimeVersion,
       platform
@@ -146,8 +156,9 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Public: asset proxy ───────────────────────────────────────────
 
   app.get("/assets/:hash", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const hash = c.req.param("hash");
-    const url = await config.adapter.getAssetUrl(hash);
+    const url = await adapter.getAssetUrl(hash);
     emit(config, { type: "asset_request", hash, found: !!url });
     if (!url) return c.notFound();
     return c.redirect(url);
@@ -158,7 +169,8 @@ export function createAirlock(config: AirlockConfig) {
   const admin = new Hono();
 
   admin.use("*", async (c, next) => {
-    if (!requireAuth(config, c.req.header("authorization"))) {
+    const token = resolveAdminToken(config, c.env);
+    if (!requireAuth(token, c.req.header("authorization"))) {
       return c.json({ error: "Unauthorized" }, 401);
     }
     await next();
@@ -167,6 +179,7 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Admin: publish ────────────────────────────────────────────────
 
   admin.post("/publish", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const body = await c.req.json<{
       manifest: StoredUpdate["manifest"];
       channel?: string;
@@ -199,7 +212,7 @@ export function createAirlock(config: AirlockConfig) {
           const data = Uint8Array.from(atob(a.base64), (ch) =>
             ch.charCodeAt(0)
           );
-          return config.adapter.storeAsset(a.hash, data, a.contentType);
+          return adapter.storeAsset(a.hash, data, a.contentType);
         })
       );
     }
@@ -213,7 +226,7 @@ export function createAirlock(config: AirlockConfig) {
       updatedAt: now,
     };
 
-    await config.adapter.publishUpdate(
+    await adapter.publishUpdate(
       channel,
       body.runtimeVersion,
       body.platform,
@@ -234,6 +247,7 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Admin: promote ────────────────────────────────────────────────
 
   admin.post("/promote", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const body = await c.req.json<{
       fromChannel: string;
       toChannel: string;
@@ -241,7 +255,7 @@ export function createAirlock(config: AirlockConfig) {
       platform: Platform;
     }>();
 
-    const source = await config.adapter.getLatestUpdate(
+    const source = await adapter.getLatestUpdate(
       body.fromChannel,
       body.runtimeVersion,
       body.platform
@@ -250,7 +264,7 @@ export function createAirlock(config: AirlockConfig) {
       return c.json({ error: "No update found in source channel" }, 404);
     }
 
-    await config.adapter.promoteUpdate(
+    await adapter.promoteUpdate(
       body.fromChannel,
       body.toChannel,
       body.runtimeVersion,
@@ -270,6 +284,7 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Admin: rollout ────────────────────────────────────────────────
 
   admin.post("/rollout", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const body = await c.req.json<{
       channel?: string;
       runtimeVersion: string;
@@ -286,7 +301,7 @@ export function createAirlock(config: AirlockConfig) {
     }
 
     const channel = body.channel ?? "default";
-    await config.adapter.setRollout(
+    await adapter.setRollout(
       channel,
       body.runtimeVersion,
       body.platform,
@@ -306,6 +321,7 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Admin: rollback ───────────────────────────────────────────────
 
   admin.post("/rollback", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const body = await c.req.json<{
       channel?: string;
       runtimeVersion: string;
@@ -313,13 +329,13 @@ export function createAirlock(config: AirlockConfig) {
     }>();
 
     const channel = body.channel ?? "default";
-    const current = await config.adapter.getLatestUpdate(
+    const current = await adapter.getLatestUpdate(
       channel,
       body.runtimeVersion,
       body.platform
     );
 
-    const previous = await config.adapter.rollbackUpdate(
+    const previous = await adapter.rollbackUpdate(
       channel,
       body.runtimeVersion,
       body.platform
@@ -341,13 +357,15 @@ export function createAirlock(config: AirlockConfig) {
   // ─── Admin: status (all updates across all channels/platforms/runtimes) ──
 
   admin.get("/status", async (c) => {
-    const updates = await config.adapter.listUpdates();
+    const adapter = resolveAdapter(config, c.env);
+    const updates = await adapter.listUpdates();
     return c.json({ updates });
   });
 
   // ─── Admin: list updates ──────────────────────────────────────────
 
   admin.get("/updates", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
     const channel = c.req.query("channel") ?? "default";
     const runtimeVersion = c.req.query("runtimeVersion");
     const platform = c.req.query("platform") as Platform | undefined;
@@ -360,7 +378,7 @@ export function createAirlock(config: AirlockConfig) {
       );
     }
 
-    const updates = await config.adapter.getUpdateHistory(
+    const updates = await adapter.getUpdateHistory(
       channel,
       runtimeVersion,
       platform,
@@ -372,5 +390,35 @@ export function createAirlock(config: AirlockConfig) {
 
   app.route("/admin", admin);
 
-  return { routes: app };
+  return {
+    routes: app,
+
+    /**
+     * Returns a WinterCG-compatible fetch handler with the basePath prefix
+     * stripped from incoming requests. Works with any framework or runtime.
+     *
+     * ```ts
+     * const handler = airlock.mount("/ota")
+     *
+     * // Cloudflare Worker:
+     * export default { fetch: handler }
+     *
+     * // Hono:
+     * app.all("/ota/*", (c) => handler(c.req.raw, c.env))
+     *
+     * // Elysia / Bun.serve:
+     * Bun.serve({ fetch: handler })
+     * ```
+     */
+    mount(basePath: string): (request: Request, env?: unknown) => Promise<Response> {
+      const base = basePath.endsWith("/") ? basePath.slice(0, -1) : basePath;
+      return (request: Request, env?: unknown): Promise<Response> => {
+        const url = new URL(request.url);
+        if (url.pathname.startsWith(base)) {
+          url.pathname = url.pathname.slice(base.length) || "/";
+        }
+        return Promise.resolve(app.fetch(new Request(url.toString(), request), env));
+      };
+    },
+  };
 }

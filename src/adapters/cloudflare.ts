@@ -29,6 +29,20 @@ export class CloudflareAdapter implements StorageAdapter {
   private r2PublicUrl: string;
 
   constructor(config: CloudflareAdapterConfig) {
+    // Runtime guard: bindings are undefined outside Cloudflare Workers (e.g. local Bun/Node dev).
+    // Fail fast with a clear message rather than a cryptic TypeError later.
+    if (!config.kv) {
+      throw new Error(
+        "CloudflareAdapter: `kv` binding is undefined — are you running outside a Cloudflare Worker? " +
+          "Use MemoryAdapter for local development."
+      );
+    }
+    if (!config.r2) {
+      throw new Error(
+        "CloudflareAdapter: `r2` binding is undefined — are you running outside a Cloudflare Worker? " +
+          "Use MemoryAdapter for local development."
+      );
+    }
     this.kv = config.kv;
     this.r2 = config.r2;
     this.r2PublicUrl = config.r2PublicUrl.replace(/\/$/, "");
