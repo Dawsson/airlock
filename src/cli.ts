@@ -5,6 +5,7 @@ import { promote } from "./cli/promote";
 import { rollback } from "./cli/rollback";
 import { rollout } from "./cli/rollout";
 import { list } from "./cli/list";
+import { status } from "./cli/status";
 import { keygen } from "./cli/keygen";
 import { init } from "./cli/init";
 
@@ -13,11 +14,12 @@ const USAGE = `airlock — self-hosted Expo OTA update server
 Usage: airlock <command> [options]
 
 Commands:
+  status      Show all deployed updates (human-friendly overview)
   publish     Publish an update from expo export output
   promote     Promote an update from one channel to another
   rollback    Roll back to the previous update
   rollout     Set rollout percentage for an update
-  list        List update history
+  list        List update history for a specific channel/platform/runtime
   keygen      Generate RSA-2048 signing key pair
   init        Initialize airlock config in your project
 
