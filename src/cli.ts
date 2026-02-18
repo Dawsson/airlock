@@ -342,46 +342,36 @@ async function wait() {
 
 async function waitForApp() {
   const targetApp = appId || args[1]
-  const url = `ws://localhost:${port}?role=watch`
+  const timer = setTimeout(() => {
+    console.error("Timed out waiting for app to connect.")
+    process.exit(1)
+  }, timeout)
 
+  try {
+    // Check if app is already connected
+    const checkRes = await wsRequest("list-apps")
+    if (checkRes.ok) {
+      const apps = (checkRes.data as any).apps as { appId: string }[]
+      const match = targetApp ? apps.find((a) => a.appId === targetApp) : apps[0]
+      if (match) {
+        clearTimeout(timer)
+        console.log(JSON.stringify({ appId: match.appId }))
+        process.exit(0)
+      }
+    }
+  } catch {
+    // list-apps check failed, continue to wait
+  }
+
+  // App not connected yet, wait for register event
+  const url = `ws://localhost:${port}?role=watch`
   return new Promise<void>((_, reject) => {
     const ws = new WebSocket(url)
-    const timer = setTimeout(() => {
-      ws.close()
-      console.error("Timed out waiting for app to connect.")
-      process.exit(1)
-    }, timeout)
 
-    // Check if app is already connected
     ws.addEventListener("open", () => {
-      const id = crypto.randomUUID()
-      const checkWs = new WebSocket(`ws://localhost:${port}`)
-      checkWs.addEventListener("open", () => {
-        checkWs.send(JSON.stringify({ id, type: "list-apps" }))
-      })
-      checkWs.addEventListener("message", (ev) => {
-        try {
-          const data = JSON.parse(String(ev.data))
-          if (data.id === id && data.ok) {
-            const apps = (data.data as any).apps as { appId: string }[]
-            const match = targetApp
-              ? apps.find((a) => a.appId === targetApp)
-              : apps[0]
-            if (match) {
-              clearTimeout(timer)
-              console.log(JSON.stringify({ appId: match.appId }))
-              ws.close()
-              checkWs.close()
-              process.exit(0)
-            }
-          }
-        } catch {}
-        checkWs.close()
-      })
-      checkWs.addEventListener("error", () => {})
+      // Send ping to keep connection alive (not strictly needed but safe)
     })
 
-    // Watch for register events
     ws.addEventListener("message", (ev) => {
       try {
         const data = JSON.parse(String(ev.data))
