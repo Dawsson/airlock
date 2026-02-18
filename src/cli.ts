@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { DEFAULT_PORT, DEFAULT_TIMEOUT, PID_FILE, LOG_FILE } from "./types"
+import { DEFAULT_PORT, DEFAULT_TIMEOUT, PID_FILE, LOG_FILE, type HandlerSchema } from "./types"
 import { setup, teardown } from "./launchd"
 import { readFileSync, existsSync } from "fs"
 import { dirname, join } from "path"
@@ -404,6 +404,45 @@ async function waitForApp() {
   })
 }
 
+async function ls() {
+  try {
+    const payload = appId ? { appId } : undefined
+    const res = await wsRequest("list-handlers", payload)
+    if (!res.ok) die(res.error || "Failed to list handlers")
+
+    const data = res.data as { appId: string; handlers: HandlerSchema[] }[]
+
+    if (hasFlag("json")) {
+      console.log(JSON.stringify(data, null, 2))
+      return
+    }
+
+    if (data.length === 0) {
+      console.log("No apps connected.")
+      return
+    }
+
+    for (const { appId: aid, handlers } of data) {
+      const count = handlers.length
+      console.log(`${aid} — ${count} handler${count !== 1 ? "s" : ""}`)
+      if (count === 0) {
+        console.log("  (none registered)")
+      } else {
+        for (const h of handlers) {
+          const fields = h.fields?.map((f) => `${f.name}${f.optional ? "?" : ""}:${f.type}`).join(" ") ?? ""
+          const desc = h.description ? `  ${h.description}` : ""
+          const col1 = `  ${h.type}`.padEnd(24)
+          const col2 = fields.padEnd(32)
+          console.log(`${col1}${col2}${desc}`)
+        }
+      }
+      console.log()
+    }
+  } catch (e: any) {
+    die(e.message)
+  }
+}
+
 async function logs() {
   if (!existsSync(LOG_FILE)) die("No log file found.")
   const proc = Bun.spawn(["tail", "-f", LOG_FILE], {
@@ -412,7 +451,7 @@ async function logs() {
   await proc.exited
 }
 
-const COMMANDS = ["status", "start", "stop", "restart", "cmd", "query", "watch", "wait", "wait-for-app", "setup", "teardown", "logs"]
+const COMMANDS = ["status", "start", "stop", "restart", "cmd", "query", "ls", "watch", "wait", "wait-for-app", "setup", "teardown", "logs"]
 
 function closestCommand(input: string): string | null {
   let best: string | null = null
@@ -456,6 +495,7 @@ Commands:
   stop                      Stop daemonized server
   restart                   Kill and relaunch server (picks up new code)
   status                    Show connected apps
+  ls [--app <id>] [--json]  List app handlers with arg types and descriptions
   cmd <type> [--key val]    Send command to app (inline args or --payload)
   query <key>               Shorthand for get-state command
   wait <event>              Block until app emits event, print payload
@@ -499,6 +539,9 @@ switch (command) {
     break
   case "query":
     await query()
+    break
+  case "ls":
+    await ls()
     break
   case "watch":
     await watch()
