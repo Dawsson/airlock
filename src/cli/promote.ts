@@ -30,7 +30,7 @@ export async function promote(args: string[]) {
     die("--from, --to, --platform, and --runtime are required");
   }
 
-  const config = loadConfig();
+  const config = await loadConfig();
   if (!config.server) die("AIRLOCK_SERVER not set");
 
   const result = await api(config, "/admin/promote", {

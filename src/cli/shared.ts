@@ -7,14 +7,15 @@ export type CliConfig = {
   token: string;
 };
 
-export function loadConfig(): CliConfig {
+export async function loadConfig(): Promise<CliConfig> {
   // Check env vars first, then .airlockrc.json
   let server = process.env.AIRLOCK_SERVER ?? "";
   let token = process.env.AIRLOCK_TOKEN ?? "";
 
   const rcPath = resolve(process.cwd(), ".airlockrc.json");
   if (existsSync(rcPath)) {
-    const rc = JSON.parse(Bun.file(rcPath).text() as unknown as string);
+    const text = await Bun.file(rcPath).text();
+    const rc = JSON.parse(text);
     server = server || rc.server || "";
     token = token || rc.token || "";
   }

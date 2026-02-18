@@ -40,7 +40,7 @@ export async function publish(args: string[]) {
   if (!platform || !runtimeVersion) die("--platform and --runtime are required");
   if (platform !== "ios" && platform !== "android") die("--platform must be ios or android");
 
-  const config = loadConfig();
+  const config = await loadConfig();
   if (!config.server) die("AIRLOCK_SERVER not set. Run `airlock init` or set the env var.");
 
   const distDir = resolve((values.dist as string) ?? "dist");

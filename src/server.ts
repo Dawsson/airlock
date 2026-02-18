@@ -22,7 +22,14 @@ function emit(config: AirlockConfig, event: AirlockEvent) {
 
 function requireAuth(config: AirlockConfig, header: string | undefined) {
   if (!config.adminToken) return true;
-  return header === `Bearer ${config.adminToken}`;
+  const expected = `Bearer ${config.adminToken}`;
+  if (!header || header.length !== expected.length) return false;
+  // Constant-time comparison to prevent timing attacks
+  const a = new TextEncoder().encode(header);
+  const b = new TextEncoder().encode(expected);
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
 }
 
 export function createAirlock(config: AirlockConfig) {
@@ -171,6 +178,17 @@ export function createAirlock(config: AirlockConfig) {
       assets?: Array<{ hash: string; base64: string; contentType: string }>;
     }>();
 
+    if (!body.manifest?.id || !body.runtimeVersion || !body.platform) {
+      return c.json({ error: "Missing manifest, runtimeVersion, or platform" }, 400);
+    }
+    if (body.platform !== "ios" && body.platform !== "android") {
+      return c.json({ error: "platform must be ios or android" }, 400);
+    }
+    const pct = body.rolloutPercentage ?? 100;
+    if (pct < 0 || pct > 100) {
+      return c.json({ error: "rolloutPercentage must be 0-100" }, 400);
+    }
+
     const channel = body.channel ?? "default";
     const now = new Date().toISOString();
 
@@ -188,7 +206,7 @@ export function createAirlock(config: AirlockConfig) {
 
     const update: StoredUpdate = {
       manifest: body.manifest,
-      rolloutPercentage: body.rolloutPercentage ?? 100,
+      rolloutPercentage: pct,
       message: body.message,
       critical: body.critical,
       createdAt: now,
@@ -259,6 +277,13 @@ export function createAirlock(config: AirlockConfig) {
       updateId: string;
       percentage: number;
     }>();
+
+    if (!body.runtimeVersion || !body.platform || !body.updateId || body.percentage == null) {
+      return c.json({ error: "Missing runtimeVersion, platform, updateId, or percentage" }, 400);
+    }
+    if (body.percentage < 0 || body.percentage > 100) {
+      return c.json({ error: "percentage must be 0-100" }, 400);
+    }
 
     const channel = body.channel ?? "default";
     await config.adapter.setRollout(

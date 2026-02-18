@@ -35,7 +35,7 @@ export async function rollout(args: string[]) {
   const pct = parseInt(values.percentage as string);
   if (isNaN(pct) || pct < 0 || pct > 100) die("--percentage must be 0-100");
 
-  const config = loadConfig();
+  const config = await loadConfig();
   if (!config.server) die("AIRLOCK_SERVER not set");
 
   await api(config, "/admin/rollout", {

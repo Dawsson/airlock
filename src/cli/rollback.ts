@@ -28,7 +28,7 @@ export async function rollback(args: string[]) {
     die("--platform and --runtime are required");
   }
 
-  const config = loadConfig();
+  const config = await loadConfig();
   if (!config.server) die("AIRLOCK_SERVER not set");
 
   const result = await api(config, "/admin/rollback", {

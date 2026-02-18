@@ -1,6 +1,7 @@
 import { writeFileSync, existsSync } from "fs";
 import { resolve } from "path";
 import { requireArgs, die } from "./shared";
+import { generateKeyPair, exportKeyToPem } from "../crypto";
 
 const USAGE = `airlock keygen — generate RSA-2048 signing key pair
 
@@ -37,30 +38,14 @@ export async function keygen(args: string[]) {
 
   console.log("Generating RSA-2048 key pair...");
 
-  const keyPair = await crypto.subtle.generateKey(
-    {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256",
-    },
-    true,
-    ["sign", "verify"]
-  );
+  const keyPair = await generateKeyPair();
+  const privatePem = await exportKeyToPem(keyPair.privateKey, "private");
+  const publicPem = await exportKeyToPem(keyPair.publicKey, "public");
 
-  const privateKeyDer = await crypto.subtle.exportKey("pkcs8", keyPair.privateKey);
-  const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
-
-  writeFileSync(privatePath, formatPem(privateKeyDer, "PRIVATE KEY"));
-  writeFileSync(publicPath, formatPem(publicKeyDer, "PUBLIC KEY"));
+  writeFileSync(privatePath, privatePem);
+  writeFileSync(publicPath, publicPem);
 
   console.log(`  ${privatePath}`);
   console.log(`  ${publicPath}`);
   console.log(`\nAdd airlock-private.pem to .gitignore!`);
-}
-
-function formatPem(der: ArrayBuffer, label: string): string {
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(der)));
-  const lines = b64.match(/.{1,64}/g) ?? [];
-  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----\n`;
 }

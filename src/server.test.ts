@@ -533,6 +533,45 @@ describe("airlock", () => {
     });
     expect(res.status).toBe(400);
   });
+
+  // ─── Admin: input validation ──────────────────────────────────────
+
+  test("publish rejects missing manifest", async () => {
+    const res = await adminRequest(app, "/publish", {
+      runtimeVersion: "1.0.0",
+      platform: "ios",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("publish rejects invalid platform", async () => {
+    const res = await adminRequest(app, "/publish", {
+      manifest: makeUpdate().manifest,
+      runtimeVersion: "1.0.0",
+      platform: "windows",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("publish rejects rollout > 100", async () => {
+    const res = await adminRequest(app, "/publish", {
+      manifest: makeUpdate().manifest,
+      runtimeVersion: "1.0.0",
+      platform: "ios",
+      rolloutPercentage: 150,
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test("rollout rejects percentage > 100", async () => {
+    const res = await adminRequest(app, "/rollout", {
+      runtimeVersion: "1.0.0",
+      platform: "ios",
+      updateId: "update-1",
+      percentage: 200,
+    });
+    expect(res.status).toBe(400);
+  });
 });
 
 // ─── Code signing tests ────────────────────────────────────────────
