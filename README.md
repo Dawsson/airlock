@@ -52,8 +52,9 @@ import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
 
 // Adapter and token factories are called per-request with the runtime env —
 // the correct pattern for Cloudflare Workers where bindings aren't available at module init.
+// CloudflareAdapter.forEnv() falls back to MemoryAdapter in local dev (no crash, just a log).
 const airlock = createAirlock({
-  adapter: (env: Env) => new CloudflareAdapter({
+  adapter: (env: Env) => CloudflareAdapter.forEnv({
     kv: env.OTA_KV,
     r2: env.OTA_R2,
     r2PublicUrl: env.R2_PUBLIC_URL,

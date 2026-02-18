@@ -1,5 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { StorageAdapter, StoredUpdate, UpdateEntry, Platform } from "../types";
+import { MemoryAdapter } from "./memory";
 
 type CloudflareAdapterConfig = {
   kv: KVNamespace;
@@ -46,6 +47,35 @@ export class CloudflareAdapter implements StorageAdapter {
     this.kv = config.kv;
     this.r2 = config.r2;
     this.r2PublicUrl = config.r2PublicUrl.replace(/\/$/, "");
+  }
+
+  /**
+   * Per-request factory with automatic local dev fallback.
+   *
+   * Pass your Cloudflare Worker env object. When KV/R2 bindings are present
+   * (i.e. inside a real Worker), returns a `CloudflareAdapter`. When they're
+   * missing (local Bun/Node dev, tests), logs an info message and returns a
+   * `MemoryAdapter` so the server still starts without crashing.
+   *
+   * ```ts
+   * createAirlock({
+   *   adapter: (env: Env) => CloudflareAdapter.forEnv({
+   *     kv: env.OTA_KV,
+   *     r2: env.OTA_R2,
+   *     r2PublicUrl: env.R2_PUBLIC_URL ?? "",
+   *   }),
+   * })
+   * ```
+   */
+  static forEnv(config: CloudflareAdapterConfig): StorageAdapter {
+    if (config.kv && config.r2) {
+      return new CloudflareAdapter(config);
+    }
+    console.info(
+      "[airlock] Cloudflare bindings not found — using MemoryAdapter (local dev). " +
+        "Updates will not persist across restarts."
+    );
+    return new MemoryAdapter();
   }
 
   async getLatestUpdate(

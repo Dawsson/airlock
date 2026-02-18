@@ -22,9 +22,10 @@ Returns a standard WinterCG `(request, env) => Response` handler. Works with any
 import { createAirlock } from "@dawsson/airlock"
 import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
 
-// Use an adapter factory so bindings are resolved per-request
+// Use an adapter factory so bindings are resolved per-request.
+// CloudflareAdapter.forEnv() falls back to MemoryAdapter in local dev (no crash, just a log).
 const airlock = createAirlock({
-  adapter: (env: Env) => new CloudflareAdapter({
+  adapter: (env: Env) => CloudflareAdapter.forEnv({
     kv: env.OTA_KV,
     r2: env.OTA_R2,
     r2PublicUrl: env.R2_PUBLIC_URL,
@@ -83,11 +84,11 @@ app.route("/ota", airlock.routes)
 | Cloudflare Workers | ❌ bindings unavailable at module init | ✅ called per-request with `env` |
 | Other runtimes | ✅ | ✅ |
 
-**Factory syntax:**
+**Factory syntax (use `forEnv` for automatic dev fallback):**
 
 ```ts
 createAirlock({
-  adapter: (env: Env) => new CloudflareAdapter({
+  adapter: (env: Env) => CloudflareAdapter.forEnv({
     kv: env.OTA_KV,
     r2: env.OTA_R2,
     r2PublicUrl: env.R2_PUBLIC_URL,
@@ -131,29 +132,23 @@ bucket_name = "your-r2-bucket"
 
 Cloudflare bindings (`KVNamespace`, `R2Bucket`) are only available inside a real Cloudflare Worker. Outside that environment — local Bun/Node dev, tests — `env.OTA_KV` and `env.OTA_R2` will be `undefined`.
 
-**Use `MemoryAdapter` for local development:**
+**Use `CloudflareAdapter.forEnv()` — it handles the fallback automatically:**
 
 ```ts
 import { createAirlock } from "@dawsson/airlock"
-import { MemoryAdapter } from "@dawsson/airlock/adapters/memory"
 import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
 
 const airlock = createAirlock({
-  adapter: (env: Env) => {
-    // Cloudflare bindings present → use real adapter
-    if (env?.OTA_KV) {
-      return new CloudflareAdapter({
-        kv: env.OTA_KV,
-        r2: env.OTA_R2,
-        r2PublicUrl: env.R2_PUBLIC_URL,
-      })
-    }
-    // Local dev fallback — in-memory, no persistence
-    return new MemoryAdapter()
-  },
+  adapter: (env: Env) => CloudflareAdapter.forEnv({
+    kv: env.OTA_KV,
+    r2: env.OTA_R2,
+    r2PublicUrl: env.R2_PUBLIC_URL ?? "",
+  }),
   adminToken: (env: Env) => env?.AIRLOCK_ADMIN_TOKEN ?? "dev-token",
 })
 ```
+
+When Cloudflare bindings are present (real Worker) → `CloudflareAdapter`. When they're missing (local Bun/Node) → `MemoryAdapter` with a `console.info` so you know what's happening. No crashes, no boilerplate.
 
 `MemoryAdapter` is Map-backed, requires no configuration, and resets on restart — ideal for local iteration and tests.
 
@@ -180,6 +175,7 @@ new CloudflareAdapter({
 - Keeps up to 50 historical updates per channel/rv/platform
 - `promoteUpdate` resets rolloutPercentage to 100
 - Throws a descriptive error at construction time if `kv` or `r2` is undefined (instead of failing silently at request time)
+- Use `CloudflareAdapter.forEnv(config)` instead of `new CloudflareAdapter(config)` when you want automatic local dev fallback to `MemoryAdapter`
 
 ### MemoryAdapter
 
