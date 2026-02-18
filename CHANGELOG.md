@@ -14,7 +14,7 @@
 - `onEvent` hook for analytics and logging
 - Critical update flag (`critical: true` in manifest extra)
 - Update messages for human-readable history
-- Code signing support
+- RSA-SHA256 code signing (rsa-v1_5-sha256, Expo-compatible)
 - Asset proxy endpoint with redirect
 - In-memory adapter for tests
 - Cloudflare KV + R2 adapter for production
