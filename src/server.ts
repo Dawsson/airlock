@@ -118,7 +118,8 @@ export function createAirlock(config: AirlockConfig) {
     if (config.signingKey) {
       signature = await signManifest(
         JSON.stringify(resolved.manifest),
-        config.signingKey
+        config.signingKey,
+        config.signingKeyId ?? "main"
       );
     }
 
@@ -129,7 +130,10 @@ export function createAirlock(config: AirlockConfig) {
       updateId: resolved.manifest.id,
     });
 
-    return buildMultipartResponse(resolved.manifest, { signature });
+    return buildMultipartResponse(resolved.manifest, {
+      signature,
+      certificateChain: config.certificateChain,
+    });
   });
 
   // ─── Public: asset proxy ───────────────────────────────────────────

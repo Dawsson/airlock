@@ -1,4 +1,5 @@
 export { createAirlock } from "./server";
+export { importSigningKey, generateKeyPair, exportKeyToPem, hashAsset } from "./crypto";
 export type {
   AirlockConfig,
   AirlockEvent,

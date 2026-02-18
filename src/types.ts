@@ -126,4 +126,6 @@ export type AirlockConfig = {
   ) => StoredUpdate | null | Promise<StoredUpdate | null>;
   onEvent?: (event: AirlockEvent) => void | Promise<void>;
   signingKey?: CryptoKey;
+  signingKeyId?: string;
+  certificateChain?: string;
 };

@@ -535,6 +535,118 @@ describe("airlock", () => {
   });
 });
 
+// ─── Code signing tests ────────────────────────────────────────────
+
+import { generateKeyPair } from "./crypto";
+
+describe("code signing", () => {
+  test("signature is included as per-part header in multipart body", async () => {
+    const keyPair = await generateKeyPair();
+    const adapter2 = new MemoryAdapter();
+    const airlock = createAirlock({
+      adapter: adapter2,
+      signingKey: keyPair.privateKey,
+    });
+    const signedApp = new Hono();
+    signedApp.route("/", airlock.routes);
+
+    await adapter2.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    const res = await manifestRequest(signedApp);
+    expect(res.status).toBe(200);
+
+    const body = await res.text();
+    // expo-signature should be inside the multipart body, not as a response header
+    expect(body).toContain("expo-signature:");
+    expect(body).toContain('alg="rsa-v1_5-sha256"');
+    expect(body).toContain('keyid="main"');
+    expect(body).toContain('sig="');
+
+    // Should NOT be a response-level header
+    expect(res.headers.get("expo-signature")).toBeNull();
+  });
+
+  test("signature uses custom keyId when configured", async () => {
+    const keyPair = await generateKeyPair();
+    const adapter2 = new MemoryAdapter();
+    const airlock = createAirlock({
+      adapter: adapter2,
+      signingKey: keyPair.privateKey,
+      signingKeyId: "custom-key",
+    });
+    const signedApp = new Hono();
+    signedApp.route("/", airlock.routes);
+
+    await adapter2.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    const res = await manifestRequest(signedApp);
+    const body = await res.text();
+    expect(body).toContain('keyid="custom-key"');
+  });
+
+  test("certificate chain is included as multipart part", async () => {
+    const keyPair = await generateKeyPair();
+    const adapter2 = new MemoryAdapter();
+    const fakeCert = "-----BEGIN CERTIFICATE-----\nMIIBfake...\n-----END CERTIFICATE-----";
+    const airlock = createAirlock({
+      adapter: adapter2,
+      signingKey: keyPair.privateKey,
+      certificateChain: fakeCert,
+    });
+    const signedApp = new Hono();
+    signedApp.route("/", airlock.routes);
+
+    await adapter2.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    const res = await manifestRequest(signedApp);
+    const body = await res.text();
+    expect(body).toContain('name="certificate_chain"');
+    expect(body).toContain("application/x-pem-file");
+    expect(body).toContain("MIIBfake");
+  });
+
+  test("unsigned response has no expo-signature in body", async () => {
+    const adapter2 = new MemoryAdapter();
+    const airlock = createAirlock({ adapter: adapter2 });
+    const unsignedApp = new Hono();
+    unsignedApp.route("/", airlock.routes);
+
+    await adapter2.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    const res = await manifestRequest(unsignedApp);
+    const body = await res.text();
+    expect(body).not.toContain("expo-signature:");
+  });
+});
+
+// ─── Multipart format tests ──────────────────────────────────────────
+
+describe("multipart format", () => {
+  test("response contains manifest and extensions parts", async () => {
+    const adapter2 = new MemoryAdapter();
+    const airlock2 = createAirlock({ adapter: adapter2 });
+    const testApp = new Hono();
+    testApp.route("/", airlock2.routes);
+
+    await adapter2.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    const res = await manifestRequest(testApp);
+    const body = await res.text();
+
+    expect(body).toContain('name="manifest"');
+    expect(body).toContain('name="extensions"');
+    expect(body).toContain("\r\n");
+  });
+
+  test("204 response includes protocol headers", async () => {
+    const adapter2 = new MemoryAdapter();
+    const airlock2 = createAirlock({ adapter: adapter2 });
+    const testApp = new Hono();
+    testApp.route("/", airlock2.routes);
+
+    const res = await manifestRequest(testApp);
+    expect(res.status).toBe(204);
+    expect(res.headers.get("expo-protocol-version")).toBe("1");
+    expect(res.headers.get("expo-sfv-version")).toBe("0");
+    expect(res.headers.get("cache-control")).toBe("private, max-age=0");
+  });
+});
+
 // ─── Rollout unit tests ──────────────────────────────────────────────
 
 import { isInRollout } from "./rollout";
