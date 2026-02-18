@@ -11,7 +11,7 @@ bun add @dawsson/airlock
 You can also install the Airlock skill into your coding agent with:
 
 ```bash
-npx skills add @dawsson/airlock
+npx skills add dawsson/airlock
 ```
 
 ## Quick Start
