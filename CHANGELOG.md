@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0] - 2026-02-18
+
+### Added
+
+- `airlock status` command — human-friendly overview of all deployed updates across every channel, platform, and runtime version; no required flags, defaults to 25 entries (`--limit` to adjust)
+- `listUpdates()` method on `StorageAdapter` interface — **required for custom adapter implementations**
+
+### Changed
+
+- README: clarified that the package serves dual purpose — import `createAirlock` on the server, run `airlock` CLI (via `bunx` or global install) to publish updates
+
 ## [0.1.0] - 2026-02-18
 
 ### Added
