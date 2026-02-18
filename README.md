@@ -47,22 +47,32 @@ npx skills add dawsson/airlock
 ## Quick Start
 
 ```ts
-import { Hono } from "hono"
 import { createAirlock } from "@dawsson/airlock"
 import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
 
-const app = new Hono()
-
+// Adapter and token factories are called per-request with the runtime env —
+// the correct pattern for Cloudflare Workers where bindings aren't available at module init.
 const airlock = createAirlock({
-  adapter: new CloudflareAdapter({
+  adapter: (env: Env) => new CloudflareAdapter({
     kv: env.OTA_KV,
     r2: env.OTA_R2,
-    r2PublicUrl: "https://cdn.example.com",
+    r2PublicUrl: env.R2_PUBLIC_URL,
   }),
-  adminToken: env.AIRLOCK_ADMIN_TOKEN,
+  adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
 })
 
-app.route("/ota", airlock.routes)
+// Returns a standard WinterCG fetch handler with basePath prefix stripping built in.
+const handler = airlock.mount("/ota")
+
+export default { fetch: handler }
+```
+
+Or mount on an existing Hono app:
+
+```ts
+import { Hono } from "hono"
+const app = new Hono<{ Bindings: Env }>()
+app.all("/ota/*", (c) => handler(c.req.raw, c.env))
 ```
 
 Point your Expo app at `https://your-api.com/ota/manifest` and updates just work.
@@ -208,6 +218,7 @@ class PostgresAdapter implements StorageAdapter {
   async promoteUpdate(fromChannel, toChannel, runtimeVersion, platform) { /* ... */ }
   async rollbackUpdate(channel, runtimeVersion, platform) { /* ... */ }
   async getUpdateHistory(channel, runtimeVersion, platform, limit?) { /* ... */ }
+  async listUpdates() { /* ... */ }
   async getAssetUrl(hash) { /* ... */ }
   async storeAsset(hash, data, contentType) { /* ... */ }
 }
@@ -223,7 +234,8 @@ All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is
 | `POST` | `/admin/promote` | Copy update from one channel to another |
 | `POST` | `/admin/rollout` | Set rollout percentage for an update |
 | `POST` | `/admin/rollback` | Revert to previous update |
-| `GET` | `/admin/updates` | List update history |
+| `GET` | `/admin/updates` | List update history for a channel/rv/platform |
+| `GET` | `/admin/status` | Overview of all deployed updates across all channels |
 
 ## License
 
