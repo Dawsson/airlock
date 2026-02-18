@@ -20,6 +20,9 @@
     "./adapters/memory": "./src/adapters/memory.ts",
     "./adapters/cloudflare": "./src/adapters/cloudflare.ts"
   },
+  "bin": {
+    "airlock": "./src/cli.ts"
+  },
   "files": [
     "src"
   ],
