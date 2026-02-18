@@ -41,6 +41,7 @@ if (command === "--version" || command === "-v") {
 }
 
 const commands: Record<string, (args: string[]) => Promise<void>> = {
+  status,
   publish,
   promote,
   rollback,
