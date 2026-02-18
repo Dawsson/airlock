@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.2.1] - 2026-02-18
+
+### Fixed
+
+- `airlock status` command was not registered in the CLI — now works correctly
+
 ## [0.2.0] - 2026-02-18
 
 ### Added
