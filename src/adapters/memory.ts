@@ -65,6 +65,18 @@ export class MemoryAdapter implements StorageAdapter {
     }
   }
 
+  async rollbackUpdate(
+    channel: string,
+    runtimeVersion: string,
+    platform: Platform
+  ): Promise<StoredUpdate | null> {
+    const k = key(channel, runtimeVersion, platform);
+    const list = this.updates.get(k) ?? [];
+    if (list.length < 2) return null;
+    list.shift(); // remove current
+    return list[0] ?? null;
+  }
+
   async getUpdateHistory(
     channel: string,
     runtimeVersion: string,
@@ -79,9 +91,17 @@ export class MemoryAdapter implements StorageAdapter {
     return this.assets.has(hash) ? `/assets/${hash}` : null;
   }
 
-  /** Test helper: store an asset directly */
-  storeAsset(hash: string, data: Uint8Array, contentType: string) {
-    this.assets.set(hash, { data, contentType });
+  async storeAsset(
+    hash: string,
+    data: Uint8Array | ReadableStream | ArrayBuffer,
+    contentType: string
+  ): Promise<string> {
+    const bytes =
+      data instanceof Uint8Array
+        ? data
+        : new Uint8Array(data instanceof ArrayBuffer ? data : await new Response(data).arrayBuffer());
+    this.assets.set(hash, { data: bytes, contentType });
+    return `/assets/${hash}`;
   }
 
   /** Test helper: get raw asset data */

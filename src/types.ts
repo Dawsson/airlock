@@ -22,9 +22,36 @@ export type ExpoManifest = {
 export type StoredUpdate = {
   manifest: ExpoManifest;
   rolloutPercentage: number;
+  message?: string;
+  critical?: boolean;
   createdAt: string;
   updatedAt: string;
 };
+
+/** Events emitted by the server for analytics/logging */
+export type AirlockEvent =
+  | {
+      type: "manifest_request";
+      context: UpdateContext;
+      served: boolean;
+      updateId?: string;
+    }
+  | { type: "asset_request"; hash: string; found: boolean }
+  | {
+      type: "update_published";
+      updateId: string;
+      channel: string;
+      runtimeVersion: string;
+      platform: Platform;
+    }
+  | { type: "rollout_changed"; updateId: string; percentage: number }
+  | {
+      type: "update_promoted";
+      updateId: string;
+      fromChannel: string;
+      toChannel: string;
+    }
+  | { type: "update_rolled_back"; channel: string; rolledBackId: string };
 
 export type Platform = "ios" | "android";
 
@@ -67,6 +94,12 @@ export interface StorageAdapter {
     platform: Platform
   ): Promise<void>;
 
+  rollbackUpdate(
+    channel: string,
+    runtimeVersion: string,
+    platform: Platform
+  ): Promise<StoredUpdate | null>;
+
   getUpdateHistory(
     channel: string,
     runtimeVersion: string,
@@ -75,14 +108,22 @@ export interface StorageAdapter {
   ): Promise<StoredUpdate[]>;
 
   getAssetUrl(hash: string): Promise<string | null>;
+
+  storeAsset(
+    hash: string,
+    data: Uint8Array | ReadableStream | ArrayBuffer,
+    contentType: string
+  ): Promise<string>;
 }
 
 /** Configuration for createAirlock() */
 export type AirlockConfig = {
   adapter: StorageAdapter;
+  adminToken?: string;
   resolveUpdate?: (
     update: StoredUpdate,
     context: UpdateContext
   ) => StoredUpdate | null | Promise<StoredUpdate | null>;
+  onEvent?: (event: AirlockEvent) => void | Promise<void>;
   signingKey?: CryptoKey;
 };

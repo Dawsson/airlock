@@ -113,16 +113,36 @@ export class CloudflareAdapter implements StorageAdapter {
     return history.slice(0, limit);
   }
 
+  async rollbackUpdate(
+    channel: string,
+    runtimeVersion: string,
+    platform: Platform
+  ): Promise<StoredUpdate | null> {
+    const currentKey = kvKey(channel, runtimeVersion, platform, "current");
+    const historyKey = kvKey(channel, runtimeVersion, platform, "history");
+    const history =
+      (await this.kv.get<StoredUpdate[]>(historyKey, "json")) ?? [];
+
+    if (history.length < 2) return null;
+
+    history.shift(); // remove current
+    const previous = history[0];
+    await Promise.all([
+      this.kv.put(currentKey, JSON.stringify(previous)),
+      this.kv.put(historyKey, JSON.stringify(history)),
+    ]);
+    return previous;
+  }
+
   async getAssetUrl(hash: string): Promise<string | null> {
     const obj = await this.r2.head(assetKey(hash));
     if (!obj) return null;
     return `${this.r2PublicUrl}/${assetKey(hash)}`;
   }
 
-  /** Upload an asset to R2 */
-  async uploadAsset(
+  async storeAsset(
     hash: string,
-    data: ReadableStream | ArrayBuffer | Uint8Array,
+    data: Uint8Array | ReadableStream | ArrayBuffer,
     contentType: string
   ): Promise<string> {
     await this.r2.put(assetKey(hash), data, {

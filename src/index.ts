@@ -1,6 +1,7 @@
 export { createAirlock } from "./server";
 export type {
   AirlockConfig,
+  AirlockEvent,
   StorageAdapter,
   StoredUpdate,
   ExpoManifest,
