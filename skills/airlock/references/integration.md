@@ -159,11 +159,13 @@ airlock keygen
 Configure the server with the private key:
 
 ```ts
-import { loadSigningKey } from "@dawsson/airlock"
+import { importSigningKey } from "@dawsson/airlock"
 
 createAirlock({
   adapter,
-  signingKey: await loadSigningKey(env.AIRLOCK_SIGNING_KEY), // PEM string
+  signingKey: await importSigningKey(env.AIRLOCK_SIGNING_KEY), // PEM string
+  signingKeyId: "main",           // optional, defaults to "main"
+  certificateChain: env.CERT_PEM, // optional, PEM cert chain for client validation
 })
 ```
 
@@ -174,7 +176,7 @@ The public key goes in your Expo app's `app.json`:
   "expo": {
     "updates": {
       "codeSigningCertificate": "./airlock-public.pem",
-      "codeSigningMetadata": { "keyid": "airlock", "alg": "rsa-v1_5-sha256" }
+      "codeSigningMetadata": { "keyid": "main", "alg": "rsa-v1_5-sha256" }
     }
   }
 }
@@ -218,7 +220,9 @@ type AirlockConfig = {
   adminToken?: string         // Required for admin endpoint auth
   resolveUpdate?: (update: StoredUpdate, context: UpdateContext) => StoredUpdate | null | Promise<StoredUpdate | null>
   onEvent?: (event: AirlockEvent) => void | Promise<void>
-  signingKey?: CryptoKey      // From loadSigningKey()
+  signingKey?: CryptoKey      // From importSigningKey()
+  signingKeyId?: string       // Defaults to "main"
+  certificateChain?: string   // Optional PEM cert chain
 }
 
 type StoredUpdate = {
