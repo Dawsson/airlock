@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.5] - 2026-02-17
+
+- Added `-v` shorthand for `--version`
+
 ## [0.3.4] - 2026-02-17
 
 - Added `--version` flag to CLI
