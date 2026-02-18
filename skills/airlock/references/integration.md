@@ -1,6 +1,6 @@
 # Integrating Airlock
 
-## Server Integration (Hono)
+## Server Integration
 
 ### 1. Install
 
@@ -8,35 +8,110 @@
 bun add @dawsson/airlock
 ```
 
-### 2. Mount on your Hono app
+### 2. Mount on your server
+
+Airlock exposes two integration styles. Use whichever fits your stack.
+
+---
+
+#### Option A — `airlock.mount(basePath)` (recommended)
+
+Returns a standard WinterCG `(request, env) => Response` handler. Works with any framework or runtime, and handles basePath prefix stripping automatically.
+
+```ts
+import { createAirlock } from "@dawsson/airlock"
+import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
+
+// Use an adapter factory so bindings are resolved per-request
+const airlock = createAirlock({
+  adapter: (env: Env) => new CloudflareAdapter({
+    kv: env.OTA_KV,
+    r2: env.OTA_R2,
+    r2PublicUrl: env.R2_PUBLIC_URL,
+  }),
+  adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
+})
+
+const handler = airlock.mount("/ota")
+```
+
+**Cloudflare Worker (bare fetch):**
+
+```ts
+export default { fetch: handler }
+```
+
+**Hono:**
+
+```ts
+import { Hono } from "hono"
+const app = new Hono<{ Bindings: Env }>()
+app.all("/ota/*", (c) => handler(c.req.raw, c.env))
+```
+
+**Elysia / Bun.serve:**
+
+```ts
+Bun.serve({ fetch: handler })
+```
+
+---
+
+#### Option B — `airlock.routes` (Hono-native)
+
+A raw Hono app instance. Use `app.route()` for prefix-stripping, but **only works when the adapter is constructed once outside the request** (not compatible with Cloudflare Workers per-request bindings).
 
 ```ts
 import { Hono } from "hono"
 import { createAirlock } from "@dawsson/airlock"
-import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
+import { MemoryAdapter } from "@dawsson/airlock/adapters/memory"
 
-const app = new Hono<{ Bindings: Env }>()
+// Works for non-Cloudflare runtimes where the adapter is a singleton
+const airlock = createAirlock({ adapter: new MemoryAdapter() })
 
-const airlock = createAirlock({
-  adapter: new CloudflareAdapter({
-    kv: env.OTA_KV,           // KVNamespace — stores update metadata
-    r2: env.OTA_R2,           // R2Bucket — stores asset binaries
-    r2PublicUrl: "https://cdn.example.com",
-  }),
-  adminToken: env.AIRLOCK_ADMIN_TOKEN,  // omit to allow unauthenticated admin access
-})
-
+const app = new Hono()
 app.route("/ota", airlock.routes)
 ```
 
-The Hono app then exposes:
+---
+
+### Adapter factory vs. static adapter
+
+| | Static adapter | Factory function |
+|---|---|---|
+| `new MemoryAdapter()` | ✅ | — |
+| Cloudflare Workers | ❌ bindings unavailable at module init | ✅ called per-request with `env` |
+| Other runtimes | ✅ | ✅ |
+
+**Factory syntax:**
+
+```ts
+createAirlock({
+  adapter: (env: Env) => new CloudflareAdapter({
+    kv: env.OTA_KV,
+    r2: env.OTA_R2,
+    r2PublicUrl: env.R2_PUBLIC_URL,
+  }),
+  adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
+})
+```
+
+Both `adapter` and `adminToken` accept either a value or a factory function.
+
+---
+
+### Exposed endpoints
+
+Once mounted at `/ota`:
+
 - `GET /ota/manifest` — Expo Updates manifest endpoint (public)
-- `GET /ota/assets/:hash` — Asset proxy (public, redirects to R2)
+- `GET /ota/assets/:hash` — Asset proxy (public, redirects to R2 or storage URL)
 - `POST /ota/admin/publish` — Publish an update
 - `POST /ota/admin/promote` — Promote between channels
 - `POST /ota/admin/rollout` — Set rollout percentage
 - `POST /ota/admin/rollback` — Revert to previous update
 - `GET /ota/admin/updates` — List update history
+- `GET /ota/admin/status` — Overview of all deployed updates
 
 ### 3. Cloudflare Workers config (`wrangler.toml`)
 
@@ -49,6 +124,38 @@ id = "your-kv-namespace-id"
 binding = "OTA_R2"
 bucket_name = "your-r2-bucket"
 ```
+
+---
+
+## Local Development
+
+Cloudflare bindings (`KVNamespace`, `R2Bucket`) are only available inside a real Cloudflare Worker. Outside that environment — local Bun/Node dev, tests — `env.OTA_KV` and `env.OTA_R2` will be `undefined`.
+
+**Use `MemoryAdapter` for local development:**
+
+```ts
+import { createAirlock } from "@dawsson/airlock"
+import { MemoryAdapter } from "@dawsson/airlock/adapters/memory"
+import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
+
+const airlock = createAirlock({
+  adapter: (env: Env) => {
+    // Cloudflare bindings present → use real adapter
+    if (env?.OTA_KV) {
+      return new CloudflareAdapter({
+        kv: env.OTA_KV,
+        r2: env.OTA_R2,
+        r2PublicUrl: env.R2_PUBLIC_URL,
+      })
+    }
+    // Local dev fallback — in-memory, no persistence
+    return new MemoryAdapter()
+  },
+  adminToken: (env: Env) => env?.AIRLOCK_ADMIN_TOKEN ?? "dev-token",
+})
+```
+
+`MemoryAdapter` is Map-backed, requires no configuration, and resets on restart — ideal for local iteration and tests.
 
 ---
 
@@ -72,6 +179,7 @@ new CloudflareAdapter({
 - R2 key format: `airlock/assets/{hash}`
 - Keeps up to 50 historical updates per channel/rv/platform
 - `promoteUpdate` resets rolloutPercentage to 100
+- Throws a descriptive error at construction time if `kv` or `r2` is undefined (instead of failing silently at request time)
 
 ### MemoryAdapter
 
@@ -98,6 +206,7 @@ class MyAdapter implements StorageAdapter {
   promoteUpdate(fromChannel, toChannel, runtimeVersion, platform): Promise<void>
   rollbackUpdate(channel, runtimeVersion, platform): Promise<StoredUpdate | null>
   getUpdateHistory(channel, runtimeVersion, platform, limit?): Promise<StoredUpdate[]>
+  listUpdates(): Promise<UpdateEntry[]>
   getAssetUrl(hash): Promise<string | null>
   storeAsset(hash, data, contentType): Promise<string>
 }
@@ -216,8 +325,8 @@ The Expo Updates client sends these headers on each manifest request:
 
 ```ts
 type AirlockConfig = {
-  adapter: StorageAdapter
-  adminToken?: string         // Required for admin endpoint auth
+  adapter: StorageAdapter | ((env: any) => StorageAdapter)
+  adminToken?: string | ((env: any) => string | undefined)
   resolveUpdate?: (update: StoredUpdate, context: UpdateContext) => StoredUpdate | null | Promise<StoredUpdate | null>
   onEvent?: (event: AirlockEvent) => void | Promise<void>
   signingKey?: CryptoKey      // From importSigningKey()
