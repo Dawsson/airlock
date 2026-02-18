@@ -4,8 +4,38 @@ Self-hosted Expo OTA update server. Ships as a Hono library you mount on your ex
 
 ## Install
 
+There are two ways to use airlock — as a **server library** and as a **CLI tool**. They're the same package.
+
+### Server (Cloudflare Worker / Hono app)
+
+Add it as a dependency in your API project:
+
 ```bash
 bun add @dawsson/airlock
+```
+
+Then import and mount it (see Quick Start below).
+
+### CLI (publish updates from your machine or CI)
+
+Run without installing:
+
+```bash
+bunx @dawsson/airlock publish --platform ios --runtime 1.0.0
+```
+
+Or install globally so `airlock` is always available:
+
+```bash
+bun add -g @dawsson/airlock
+airlock publish --platform ios --runtime 1.0.0
+```
+
+Or add as a dev dependency in your Expo project:
+
+```bash
+bun add -D @dawsson/airlock
+bunx airlock publish --platform ios --runtime 1.0.0
 ```
 
 You can also install the Airlock skill into your coding agent with:
