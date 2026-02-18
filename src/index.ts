@@ -5,6 +5,7 @@ export type {
   AirlockEvent,
   StorageAdapter,
   StoredUpdate,
+  UpdateEntry,
   ExpoManifest,
   ManifestAsset,
   UpdateContext,

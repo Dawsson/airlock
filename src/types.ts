@@ -64,6 +64,14 @@ export type UpdateContext = {
   currentUpdateId: string | null;
 };
 
+/** A single update entry returned by listUpdates() */
+export type UpdateEntry = {
+  channel: string;
+  runtimeVersion: string;
+  platform: Platform;
+  update: StoredUpdate;
+};
+
 /** Storage backend interface — implement for your infra */
 export interface StorageAdapter {
   getLatestUpdate(
@@ -106,6 +114,8 @@ export interface StorageAdapter {
     platform: Platform,
     limit?: number
   ): Promise<StoredUpdate[]>;
+
+  listUpdates(): Promise<UpdateEntry[]>;
 
   getAssetUrl(hash: string): Promise<string | null>;
 
