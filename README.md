@@ -8,6 +8,12 @@ Self-hosted Expo OTA update server. Ships as a Hono library you mount on your ex
 bun add @dawsson/airlock
 ```
 
+You can also install the Airlock skill into your coding agent with:
+
+```bash
+npx skills add @dawsson/airlock
+```
+
 ## Quick Start
 
 ```ts
@@ -30,6 +36,25 @@ app.route("/ota", airlock.routes)
 ```
 
 Point your Expo app at `https://your-api.com/ota/manifest` and updates just work.
+
+## Expo App Configuration
+
+Add this to your `app.json` or `app.config.ts`:
+
+```json
+{
+  "expo": {
+    "updates": {
+      "url": "https://your-api.com/ota/manifest",
+      "enabled": true,
+      "checkAutomatically": "ON_LOAD"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
+  }
+}
+```
 
 ## CLI
 
@@ -54,6 +79,7 @@ airlock keygen
 ## Features
 
 - Expo Updates protocol v1 compliant (multipart/mixed manifests)
+- RSA-SHA256 code signing (`rsa-v1_5-sha256`, Expo-compatible)
 - Deterministic hash-based rollout (same device always gets same result)
 - Channel support (default, staging, production, etc.)
 - Admin API with bearer token auth (publish, promote, rollback, rollout)
@@ -61,7 +87,6 @@ airlock keygen
 - `onEvent` hook for analytics and logging
 - Critical update flag (passed to client via manifest `extra`)
 - Update messages for human-readable history
-- Optional code signing
 - Asset proxy endpoint
 - CLI for publishing and managing updates
 
@@ -98,12 +123,65 @@ createAirlock({
 })
 ```
 
+## Code Signing
+
+Generate a key pair:
+
+```bash
+airlock keygen
+# Creates: airlock-private.pem, airlock-public.pem
+```
+
+Configure the server:
+
+```ts
+import { createAirlock, importSigningKey } from "@dawsson/airlock"
+
+createAirlock({
+  adapter,
+  signingKey: await importSigningKey(env.AIRLOCK_SIGNING_KEY),
+  signingKeyId: "main",
+})
+```
+
+Add the public key to your Expo app's `app.json`:
+
+```json
+{
+  "expo": {
+    "updates": {
+      "codeSigningCertificate": "./airlock-public.pem",
+      "codeSigningMetadata": { "keyid": "main", "alg": "rsa-v1_5-sha256" }
+    }
+  }
+}
+```
+
 ## Adapters
+
+### Built-in
 
 - **`@dawsson/airlock/adapters/cloudflare`** — KV for metadata, R2 for assets
 - **`@dawsson/airlock/adapters/memory`** — In-memory, for tests
 
-Implement `StorageAdapter` for anything else (Postgres, S3, etc.).
+### Custom
+
+Implement `StorageAdapter` for any backend (Postgres, S3, Upstash, etc.):
+
+```ts
+import type { StorageAdapter, StoredUpdate, Platform } from "@dawsson/airlock"
+
+class PostgresAdapter implements StorageAdapter {
+  async getLatestUpdate(channel, runtimeVersion, platform) { /* ... */ }
+  async publishUpdate(channel, runtimeVersion, platform, update) { /* ... */ }
+  async setRollout(channel, runtimeVersion, platform, updateId, percentage) { /* ... */ }
+  async promoteUpdate(fromChannel, toChannel, runtimeVersion, platform) { /* ... */ }
+  async rollbackUpdate(channel, runtimeVersion, platform) { /* ... */ }
+  async getUpdateHistory(channel, runtimeVersion, platform, limit?) { /* ... */ }
+  async getAssetUrl(hash) { /* ... */ }
+  async storeAsset(hash, data, contentType) { /* ... */ }
+}
+```
 
 ## Admin API
 
