@@ -338,6 +338,13 @@ export function createAirlock(config: AirlockConfig) {
     return c.json({ ok: true, activeUpdateId: previous.manifest.id });
   });
 
+  // ─── Admin: status (all updates across all channels/platforms/runtimes) ──
+
+  admin.get("/status", async (c) => {
+    const updates = await config.adapter.listUpdates();
+    return c.json({ updates });
+  });
+
   // ─── Admin: list updates ──────────────────────────────────────────
 
   admin.get("/updates", async (c) => {
