@@ -1,4 +1,4 @@
-import type { StorageAdapter, StoredUpdate, Platform } from "../types";
+import type { StorageAdapter, StoredUpdate, UpdateEntry, Platform } from "../types";
 
 function key(channel: string, runtimeVersion: string, platform: Platform) {
   return `${channel}/${runtimeVersion}/${platform}`;
@@ -85,6 +85,16 @@ export class MemoryAdapter implements StorageAdapter {
   ): Promise<StoredUpdate[]> {
     const list = this.updates.get(key(channel, runtimeVersion, platform)) ?? [];
     return list.slice(0, limit);
+  }
+
+  async listUpdates(): Promise<UpdateEntry[]> {
+    const results: UpdateEntry[] = [];
+    for (const [k, list] of this.updates) {
+      if (!list.length) continue;
+      const [channel, runtimeVersion, platform] = k.split("/");
+      results.push({ channel, runtimeVersion, platform: platform as Platform, update: list[0] });
+    }
+    return results;
   }
 
   async getAssetUrl(hash: string): Promise<string | null> {

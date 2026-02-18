@@ -1,5 +1,5 @@
 /// <reference types="@cloudflare/workers-types" />
-import type { StorageAdapter, StoredUpdate, Platform } from "../types";
+import type { StorageAdapter, StoredUpdate, UpdateEntry, Platform } from "../types";
 
 type CloudflareAdapterConfig = {
   kv: KVNamespace;
@@ -132,6 +132,37 @@ export class CloudflareAdapter implements StorageAdapter {
       this.kv.put(historyKey, JSON.stringify(history)),
     ]);
     return previous;
+  }
+
+  async listUpdates(): Promise<UpdateEntry[]> {
+    const results: UpdateEntry[] = [];
+    let cursor: string | undefined;
+
+    do {
+      const listed: KVNamespaceListResult<unknown> = await this.kv.list({
+        prefix: `${PREFIX}/`,
+        ...(cursor ? { cursor } : {}),
+      });
+
+      for (const key of listed.keys) {
+        if (!key.name.endsWith("/current")) continue;
+        // key: airlock/v1/{channel}/{runtimeVersion}/{platform}/current
+        const inner = key.name.slice(`${PREFIX}/`.length);
+        const parts = inner.split("/");
+        if (parts.length < 4) continue;
+        parts.pop(); // "current"
+        const platform = parts.pop() as Platform;
+        const runtimeVersion = parts.pop()!;
+        const channel = parts.join("/");
+
+        const update = await this.kv.get<StoredUpdate>(key.name, "json");
+        if (update) results.push({ channel, runtimeVersion, platform, update });
+      }
+
+      cursor = listed.list_complete ? undefined : (listed as { cursor?: string }).cursor;
+    } while (cursor);
+
+    return results;
   }
 
   async getAssetUrl(hash: string): Promise<string | null> {
