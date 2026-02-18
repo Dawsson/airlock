@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.0] - 2026-02-18
+
+### Added
+
+- `airlock.mount(basePath)` — returns a WinterCG-compatible `(request, env) => Response` handler with basePath prefix stripping built in; works with Cloudflare Workers, Hono, Elysia, Bun.serve, or any fetch-based runtime
+- Adapter and `adminToken` factory support — pass `(env) => adapter` instead of a static instance so Cloudflare Worker bindings can be resolved per-request
+- `CloudflareAdapter.forEnv(config)` — static factory that automatically falls back to `MemoryAdapter` (with a `console.info`) when Cloudflare bindings are missing, eliminating crashes in local dev
+- `CloudflareAdapter` constructor now throws a descriptive error at construction time when `kv` or `r2` is undefined, instead of a cryptic `TypeError` on first request
+
 ## [0.2.1] - 2026-02-18
 
 ### Fixed
