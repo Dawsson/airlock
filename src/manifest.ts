@@ -38,6 +38,9 @@ export function buildMultipartResponse(
   }
 
   parts.push(`--${BOUNDARY}--`);
+  // Trailing empty string ensures the body ends with \r\n after the close
+  // delimiter — required by the expo-updates iOS multipart stream reader.
+  parts.push("");
 
   const body = parts.join("\r\n");
 
@@ -67,6 +70,9 @@ export function buildDirectiveResponse(
   parts.push("");
   parts.push(directiveJson);
   parts.push(`--${BOUNDARY}--`);
+  // Trailing empty string ensures the body ends with \r\n after the close
+  // delimiter — required by the expo-updates iOS multipart stream reader.
+  parts.push("");
 
   const body = parts.join("\r\n");
 
