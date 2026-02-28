@@ -3,6 +3,7 @@ import { join, resolve } from "path";
 
 const root = resolve(import.meta.dir, "..", "..");
 const fixtureDir = join(root, "e2e", "expo-ota-fixture");
+const markerFile = join(fixtureDir, "app", "ota-marker.ts");
 const bundleId = process.env.AIRLOCK_E2E_BUNDLE_ID ?? "com.dawson.airlockotafixture";
 const simulatorName = process.env.AIRLOCK_E2E_SIMULATOR ?? "iPhone 17 Pro";
 const port = process.env.AIRLOCK_E2E_PORT ?? "8788";
@@ -57,16 +58,26 @@ async function waitForServer(url: string, timeoutMs = 10_000) {
 
 async function exportAndPublish(marker: string, message: string) {
   const distDir = join(fixtureDir, `dist-${marker}`);
+  await Bun.write(markerFile, `export const OTA_MARKER = "${marker}";\n`);
   run(["rm", "-rf", distDir]);
   run(
     ["bunx", "expo", "export", "--platform", "ios", "--output-dir", distDir],
     fixtureDir,
     {
-      EXPO_PUBLIC_OTA_MARKER: marker,
       EXPO_NO_TELEMETRY: "1",
       CI: "1",
     }
   );
+  const expoConfigRaw = run(
+    ["bunx", "expo", "config", "--type", "public", "--json"],
+    fixtureDir,
+    {
+      EXPO_NO_TELEMETRY: "1",
+      CI: "1",
+    }
+  );
+  const expoConfig = JSON.parse(expoConfigRaw);
+  await Bun.write(join(distDir, "expoConfig.json"), `${JSON.stringify(expoConfig, null, 2)}\n`);
   run(
     [
       "bun",
@@ -96,7 +107,8 @@ function ensureFixture() {
   }
 }
 
-function buildRelease(marker: string) {
+async function buildRelease(marker: string) {
+  await Bun.write(markerFile, `export const OTA_MARKER = "${marker}";\n`);
   run(
     [
       "bunx",
@@ -104,12 +116,12 @@ function buildRelease(marker: string) {
       "run:ios",
       "--configuration",
       "Release",
-      "--simulator",
+      "--no-bundler",
+      "--device",
       simulatorName,
     ],
     fixtureDir,
     {
-      EXPO_PUBLIC_OTA_MARKER: marker,
       EXPO_NO_TELEMETRY: "1",
       CI: "1",
     }
@@ -152,15 +164,15 @@ async function main() {
   try {
     await waitForServer(`http://127.0.0.1:${port}/health`);
 
-    exportAndPublish("v1", "fixture v1");
-    buildRelease("v1");
+    await exportAndPublish("v1", "fixture v1");
+    await buildRelease("v1");
 
     const firstLaunch = launchAndReadStatus();
     if (firstLaunch.marker !== "v1") {
       throw new Error(`expected first launch marker=v1, got ${firstLaunch.marker}`);
     }
 
-    exportAndPublish("v2", "fixture v2");
+    await exportAndPublish("v2", "fixture v2");
 
     const secondLaunch = launchAndReadStatus();
     if (secondLaunch.checkResult !== "update-fetched" && secondLaunch.checkResult !== "up-to-date") {
@@ -174,9 +186,9 @@ async function main() {
 
     console.log("PASS: iOS OTA loop complete (v1 -> v2).");
   } finally {
+    await Bun.write(markerFile, 'export const OTA_MARKER = "v1";\n');
     serverProc.kill();
   }
 }
 
 await main();
-

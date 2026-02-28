@@ -50,6 +50,10 @@ export async function publish(args: string[]) {
   const metadataPath = resolve(distDir, "metadata.json");
   if (!existsSync(metadataPath)) die("metadata.json not found in dist directory");
   const metadata = JSON.parse(readFileSync(metadataPath, "utf-8"));
+  const expoConfigPath = resolve(distDir, "expoConfig.json");
+  const expoConfig = existsSync(expoConfigPath)
+    ? JSON.parse(readFileSync(expoConfigPath, "utf-8"))
+    : null;
 
   const platformMetadata = metadata.fileMetadata?.[platform === "ios" ? "ios" : "android"];
   if (!platformMetadata) die(`No ${platform} metadata found in metadata.json`);
@@ -59,6 +63,7 @@ export async function publish(args: string[]) {
   if (!existsSync(bundlePath)) die(`Bundle not found: ${bundlePath}`);
   const bundleData = readFileSync(bundlePath);
   const bundleHash = hashAsset(bundleData);
+  const bundleExt = extname(bundlePath) || ".js";
 
   // Read assets
   const assets: Array<{ hash: string; base64: string; contentType: string }> = [];
@@ -86,7 +91,8 @@ export async function publish(args: string[]) {
     }
     const data = readFileSync(assetPath);
     const hash = hashAsset(data);
-    const ext = extname(asset.path);
+    const key = basename(asset.path);
+    const ext = asset.ext ? `.${asset.ext}` : extname(asset.path);
     assets.push({
       hash,
       base64: data.toString("base64"),
@@ -94,7 +100,7 @@ export async function publish(args: string[]) {
     });
     manifestAssets.push({
       hash,
-      key: basename(asset.path, ext),
+      key,
       contentType: guessContentType(ext),
       fileExtension: ext,
       url: `assets/${hash}`,
@@ -112,12 +118,12 @@ export async function publish(args: string[]) {
       hash: bundleHash,
       key: "bundle",
       contentType: "application/javascript",
-      fileExtension: ".js",
+      fileExtension: bundleExt,
       url: `assets/${bundleHash}`,
     },
     assets: manifestAssets,
     metadata: {},
-    extra: {},
+    extra: expoConfig ? { expoClient: expoConfig } : {},
   };
 
   console.log(`Publishing ${platform} update for rv ${runtimeVersion}...`);

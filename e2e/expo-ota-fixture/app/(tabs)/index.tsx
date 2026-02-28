@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Updates from "expo-updates";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { OTA_MARKER } from "../ota-marker";
 
 type OtaDiagnostics = {
   marker: string;
@@ -17,7 +18,7 @@ type OtaDiagnostics = {
 const STATUS_FILE = `${FileSystem.documentDirectory ?? ""}ota-status.json`;
 
 export default function HomeScreen() {
-  const marker = useMemo(() => process.env.EXPO_PUBLIC_OTA_MARKER ?? "embedded", []);
+  const marker = useMemo(() => OTA_MARKER, []);
   const [diagnostics, setDiagnostics] = useState<OtaDiagnostics>({
     marker,
     runtimeVersion: String(Updates.runtimeVersion ?? "unknown"),
@@ -71,6 +72,9 @@ export default function HomeScreen() {
       };
       setDiagnostics(next);
       await persist(next);
+      // Apply the freshly downloaded update immediately so the next cold launch
+      // is guaranteed to boot the new bundle in e2e validation.
+      await Updates.reloadAsync();
     } catch (error) {
       next = {
         ...next,

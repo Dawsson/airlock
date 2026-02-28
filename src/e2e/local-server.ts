@@ -9,6 +9,11 @@ const adapter = new MemoryAdapter();
 const airlock = createAirlock({
   adapter,
   adminToken,
+  onEvent(event) {
+    if (event.type === "asset_request" && !event.found) {
+      console.error(`[airlock-e2e] missing asset hash=${event.hash}`);
+    }
+  },
 });
 
 const app = new Hono();
@@ -28,4 +33,3 @@ process.on("SIGINT", () => {
   server.stop(true);
   process.exit(0);
 });
-
