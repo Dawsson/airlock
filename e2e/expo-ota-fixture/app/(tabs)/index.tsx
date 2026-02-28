@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Updates from "expo-updates";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -12,13 +12,43 @@ type OtaDiagnostics = {
   checkResult: "idle" | "checking" | "up-to-date" | "update-fetched" | "error";
   fetchedUpdateId: string | null;
   error: string | null;
+  launchAssetHash: string | null;
+  launchAssetUrl: string | null;
+  manifestCreatedAt: string | null;
+  manifestRawId: string | null;
+  checkDurationMs: number | null;
+  fetchDurationMs: number | null;
+  reloadRequestedAt: string | null;
+  logs: string[];
   timestamp: string;
 };
 
 const STATUS_FILE = `${FileSystem.documentDirectory ?? ""}ota-status.json`;
 
 export default function HomeScreen() {
-  const marker = useMemo(() => OTA_MARKER, []);
+  const currentManifest = (
+    Updates.manifest
+      ? Updates.manifest
+      : Updates.manifestString
+        ? JSON.parse(Updates.manifestString)
+        : null
+  ) as
+    | {
+        id?: string;
+        createdAt?: string;
+        launchAsset?: { hash?: string; url?: string };
+        extra?: { expoClient?: { extra?: { otaMarker?: string } } };
+      }
+    | null;
+  const marker =
+    currentManifest?.extra?.expoClient?.extra?.otaMarker ??
+    OTA_MARKER;
+
+  function appendLog(logs: string[], message: string): string[] {
+    const entry = `${new Date().toISOString()} ${message}`;
+    return [entry, ...logs].slice(0, 30);
+  }
+
   const [diagnostics, setDiagnostics] = useState<OtaDiagnostics>({
     marker,
     runtimeVersion: String(Updates.runtimeVersion ?? "unknown"),
@@ -27,6 +57,16 @@ export default function HomeScreen() {
     checkResult: "idle",
     fetchedUpdateId: null,
     error: null,
+    launchAssetHash: currentManifest?.launchAsset?.hash ?? null,
+    launchAssetUrl: currentManifest?.launchAsset?.url ?? null,
+    manifestCreatedAt: currentManifest?.createdAt ?? null,
+    manifestRawId: currentManifest?.id ?? null,
+    checkDurationMs: null,
+    fetchDurationMs: null,
+    reloadRequestedAt: null,
+    logs: [
+      `${new Date().toISOString()} launch updateId=${Updates.updateId ?? "null"} marker=${marker} embedded=${String(Updates.isEmbeddedLaunch)}`,
+    ],
     timestamp: new Date().toISOString(),
   });
 
@@ -35,29 +75,42 @@ export default function HomeScreen() {
   }
 
   async function runUpdateCheck() {
+    const checkStart = Date.now();
     let next: OtaDiagnostics = {
       ...diagnostics,
       checkResult: "checking",
+      error: null,
+      checkDurationMs: null,
+      fetchDurationMs: null,
       timestamp: new Date().toISOString(),
+      logs: appendLog(diagnostics.logs, "check started"),
     };
     setDiagnostics(next);
 
     try {
       const check = await Updates.checkForUpdateAsync();
+      const checkDurationMs = Date.now() - checkStart;
       if (!check.isAvailable) {
         next = {
           ...next,
           checkResult: "up-to-date",
           fetchedUpdateId: null,
           updateId: Updates.updateId ?? null,
+          checkDurationMs,
           timestamp: new Date().toISOString(),
+          logs: appendLog(
+            next.logs,
+            `check complete: up-to-date in ${checkDurationMs}ms (updateId=${Updates.updateId ?? "null"})`
+          ),
         };
         setDiagnostics(next);
         await persist(next);
         return;
       }
 
+      const fetchStart = Date.now();
       const fetched = await Updates.fetchUpdateAsync();
+      const fetchDurationMs = Date.now() - fetchStart;
       const fetchedUpdateId =
         fetched.manifest && "id" in fetched.manifest
           ? String(fetched.manifest.id)
@@ -68,12 +121,21 @@ export default function HomeScreen() {
         checkResult: "update-fetched",
         fetchedUpdateId,
         updateId: Updates.updateId ?? null,
+        checkDurationMs,
+        fetchDurationMs,
+        reloadRequestedAt: new Date().toISOString(),
         timestamp: new Date().toISOString(),
+        logs: appendLog(
+          next.logs,
+          `fetch complete: fetchedUpdateId=${fetchedUpdateId ?? "null"} checkMs=${checkDurationMs} fetchMs=${fetchDurationMs}`
+        ),
       };
       setDiagnostics(next);
       await persist(next);
-      // Apply the freshly downloaded update immediately so the next cold launch
-      // is guaranteed to boot the new bundle in e2e validation.
+      await persist({
+        ...next,
+        logs: appendLog(next.logs, "reload requested"),
+      });
       await Updates.reloadAsync();
     } catch (error) {
       next = {
@@ -82,6 +144,10 @@ export default function HomeScreen() {
         error: error instanceof Error ? error.message : String(error),
         updateId: Updates.updateId ?? null,
         timestamp: new Date().toISOString(),
+        logs: appendLog(
+          next.logs,
+          `check error: ${error instanceof Error ? error.message : String(error)}`
+        ),
       };
       setDiagnostics(next);
       await persist(next);
@@ -107,12 +173,42 @@ export default function HomeScreen() {
         <Text selectable testID="marker" style={styles.value}>{diagnostics.marker}</Text>
       </View>
       <View style={styles.card}>
+        <Text style={styles.label}>Manifest Marker (extra.otaMarker)</Text>
+        <Text selectable testID="manifest-marker" style={styles.value}>
+          {currentManifest?.extra?.expoClient?.extra?.otaMarker ?? "null"}
+        </Text>
+      </View>
+      <View style={styles.card}>
         <Text style={styles.label}>Runtime Version</Text>
         <Text selectable testID="runtime-version" style={styles.value}>{diagnostics.runtimeVersion}</Text>
       </View>
       <View style={styles.card}>
+        <Text style={styles.label}>Manifest Raw ID</Text>
+        <Text selectable testID="manifest-raw-id" style={styles.value}>
+          {diagnostics.manifestRawId ?? "null"}
+        </Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Manifest Created At</Text>
+        <Text selectable testID="manifest-created-at" style={styles.value}>
+          {diagnostics.manifestCreatedAt ?? "null"}
+        </Text>
+      </View>
+      <View style={styles.card}>
         <Text style={styles.label}>Active Update ID</Text>
         <Text selectable testID="update-id" style={styles.value}>{diagnostics.updateId ?? "null"}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Launch Asset Hash</Text>
+        <Text selectable testID="launch-asset-hash" style={styles.value}>
+          {diagnostics.launchAssetHash ?? "null"}
+        </Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Launch Asset URL</Text>
+        <Text selectable testID="launch-asset-url" style={styles.value}>
+          {diagnostics.launchAssetUrl ?? "null"}
+        </Text>
       </View>
       <View style={styles.card}>
         <Text style={styles.label}>Embedded Launch</Text>
@@ -133,8 +229,20 @@ export default function HomeScreen() {
         <Text selectable testID="last-error" style={styles.value}>{diagnostics.error ?? "none"}</Text>
       </View>
       <View style={styles.card}>
+        <Text style={styles.label}>Timings</Text>
+        <Text selectable testID="timings" style={styles.value}>
+          {`check=${diagnostics.checkDurationMs ?? "null"}ms fetch=${diagnostics.fetchDurationMs ?? "null"}ms`}
+        </Text>
+      </View>
+      <View style={styles.card}>
         <Text style={styles.label}>Status File</Text>
         <Text selectable style={styles.path}>{STATUS_FILE}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Debug Logs</Text>
+        <Text selectable testID="debug-logs" style={styles.path}>
+          {diagnostics.logs.join("\n")}
+        </Text>
       </View>
       <Pressable style={styles.button} onPress={() => runUpdateCheck()}>
         <Text style={styles.buttonText}>Check/FETCH Update</Text>

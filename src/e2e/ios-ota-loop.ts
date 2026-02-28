@@ -1,9 +1,10 @@
-import { existsSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
 
 const root = resolve(import.meta.dir, "..", "..");
 const fixtureDir = join(root, "e2e", "expo-ota-fixture");
 const markerFile = join(fixtureDir, "app", "ota-marker.ts");
+const fixtureAppJsonFile = join(fixtureDir, "app.json");
 const bundleId = process.env.AIRLOCK_E2E_BUNDLE_ID ?? "com.dawson.airlockotafixture";
 const simulatorName = process.env.AIRLOCK_E2E_SIMULATOR ?? "iPhone 17 Pro";
 const port = process.env.AIRLOCK_E2E_PORT ?? "8788";
@@ -21,6 +22,16 @@ type OtaStatus = {
   error: string | null;
   timestamp: string;
 };
+
+function setFixtureMarker(marker: string) {
+  const appJson = JSON.parse(readFileSync(fixtureAppJsonFile, "utf-8")) as {
+    expo?: { extra?: Record<string, unknown> };
+  };
+  appJson.expo ??= {};
+  appJson.expo.extra ??= {};
+  appJson.expo.extra.otaMarker = marker;
+  writeFileSync(fixtureAppJsonFile, `${JSON.stringify(appJson, null, 2)}\n`);
+}
 
 function run(cmd: string[], cwd = root, env?: Record<string, string>, allowFail = false): string {
   console.log(`$ ${cmd.join(" ")}`);
@@ -71,9 +82,10 @@ async function waitForServer(url: string, timeoutMs = 10_000) {
 async function exportAndPublish(marker: string, message: string) {
   const distDir = join(fixtureDir, `dist-${marker}`);
   await Bun.write(markerFile, `export const OTA_MARKER = "${marker}";\n`);
+  setFixtureMarker(marker);
   run(["rm", "-rf", distDir]);
   run(
-    ["bunx", "expo", "export", "--platform", "ios", "--output-dir", distDir],
+    ["bunx", "expo", "export", "--clear", "--platform", "ios", "--output-dir", distDir],
     fixtureDir,
     {
       EXPO_NO_TELEMETRY: "1",
@@ -121,6 +133,7 @@ function ensureFixture() {
 
 async function buildRelease(marker: string) {
   await Bun.write(markerFile, `export const OTA_MARKER = "${marker}";\n`);
+  setFixtureMarker(marker);
   run(
     [
       "bunx",
@@ -228,6 +241,7 @@ async function main() {
     console.log("PASS: iOS OTA loop complete (v1 -> v2).");
   } finally {
     await Bun.write(markerFile, 'export const OTA_MARKER = "v1";\n');
+    setFixtureMarker("v1");
     serverProc.kill();
   }
 }

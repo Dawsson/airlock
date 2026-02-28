@@ -55,6 +55,9 @@
       "enabled": true,
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
+    },
+    "extra": {
+      "otaMarker": "v1"
     }
   }
 }
