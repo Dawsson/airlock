@@ -106,6 +106,7 @@ airlock init --server https://api.example.com/ota --token your-admin-token
 # Publish from expo export output
 npx expo export --platform ios
 airlock publish --platform ios --runtime 1.0.0 --message "fix login crash"
+airlock publish --platform ios --runtime 1.0.0 --kind emergency --stage production --cohort A --min-bandwidth 1500 --immediate-apply always
 
 # Manage updates
 airlock list --platform ios --runtime 1.0.0
@@ -147,6 +148,23 @@ The fixture app writes launch/update diagnostics to:
 `<simulator app data>/Documents/ota-status.json`
 
 The e2e script reads this file to assert OTA behavior.
+It also writes a timing report to `e2e/ios-ota-report.json`.
+
+### Advanced production feature checks
+
+Run a fast smoke suite for production controls:
+
+```bash
+bun run e2e:advanced
+```
+
+This verifies:
+
+1. A/B cohort targeting (`x-airlock-cohort`)
+2. Bandwidth-aware update gating (`x-airlock-bandwidth-kbps`)
+3. Crash-rate auto-blocking (bad latest update is skipped)
+4. Manual rollback behavior
+5. Health telemetry endpoint output
 
 ### Run server manually
 
@@ -180,6 +198,12 @@ Override with env vars:
 - Deterministic hash-based rollout (same device always gets same result)
 - Channel support (default, staging, production, etc.)
 - Admin API with bearer token auth (publish, promote, rollback, rollout)
+- Targeting controls: cohort, minimum bandwidth, and stage gating
+- Update metadata: kind (`feature|optional|hotfix|emergency`), stage, tags
+- Immediate-apply hint in manifest `extra.immediateApply`
+- Telemetry ingestion endpoint for launch/apply/download events
+- Health stats endpoint (crash rate + timing aggregates)
+- Automatic unhealthy-update blocking based on crash-rate thresholds
 - `resolveUpdate` hook for custom logic (A/B testing, feature flags, user targeting)
 - `onEvent` hook for analytics and logging
 - Critical update flag (passed to client via manifest `extra`)
@@ -254,6 +278,24 @@ Add the public key to your Expo app's `app.json`:
 }
 ```
 
+### Crash Gating Policy
+
+Configure automatic unhealthy update blocking:
+
+```ts
+createAirlock({
+  adapter,
+  stability: {
+    autoBlockUnhealthy: true,
+    minLaunchesForBlocking: 20,
+    crashRateThreshold: 0.2,
+  },
+})
+```
+
+If telemetry reports that an update exceeds the crash threshold after the minimum
+sample size, Airlock skips that update and serves the next eligible one.
+
 ## Adapters
 
 ### Built-in
@@ -291,8 +333,29 @@ All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is
 | `POST` | `/admin/promote` | Copy update from one channel to another |
 | `POST` | `/admin/rollout` | Set rollout percentage for an update |
 | `POST` | `/admin/rollback` | Revert to previous update |
+| `POST` | `/admin/client-events` | Record client launch/download/apply telemetry |
+| `GET` | `/admin/health` | Read per-update crash-rate and timing aggregates |
 | `GET` | `/admin/updates` | List update history for a channel/rv/platform |
 | `GET` | `/admin/status` | Overview of all deployed updates across all channels |
+
+## iOS Timing Baseline
+
+From the latest local run (`e2e/ios-ota-report.json`, iPhone 17 Pro simulator):
+
+| Step | Duration |
+|------|----------|
+| wait_for_server | 270 ms |
+| export_publish_v1 | 7.0 s |
+| build_release_v1 | 25.8 s |
+| first_launch | 8.4 s |
+| export_publish_v2 | 7.3 s |
+| second_launch | 8.4 s |
+| third_launch | 8.4 s |
+| **total** | **65.6 s** |
+
+Notes:
+- Build dominates runtime; OTA publish/fetch/apply loop is significantly faster than full rebuild.
+- Second launch was non-embedded (`isEmbeddedLaunch=false`), confirming OTA activation.
 
 ## License
 

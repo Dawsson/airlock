@@ -13,6 +13,12 @@ Options:
   --runtime, -r    Runtime version (required)
   --channel, -c    Channel name (default: default)
   --message, -m    Human-readable update message
+  --kind           Update kind: feature|optional|hotfix|emergency
+  --stage          Stage: development|preview|staging|production
+  --tags           Comma-separated tags
+  --cohort         Optional cohort identifier for A/B targeting
+  --min-bandwidth  Minimum required bandwidth in kbps
+  --immediate-apply Apply hint: never|wifi_only|always
   --critical        Mark as critical update
   --rollout         Rollout percentage (default: 100)`;
 
@@ -24,6 +30,12 @@ export async function publish(args: string[]) {
       runtime: { type: "string", short: "r" },
       channel: { type: "string", short: "c" },
       message: { type: "string", short: "m" },
+      kind: { type: "string" },
+      stage: { type: "string" },
+      tags: { type: "string" },
+      cohort: { type: "string" },
+      "min-bandwidth": { type: "string" },
+      "immediate-apply": { type: "string" },
       critical: { type: "boolean" },
       rollout: { type: "string" },
       help: { type: "boolean", short: "h" },
@@ -39,6 +51,24 @@ export async function publish(args: string[]) {
   const runtimeVersion = values.runtime as string | undefined;
   if (!platform || !runtimeVersion) die("--platform and --runtime are required");
   if (platform !== "ios" && platform !== "android") die("--platform must be ios or android");
+  if (
+    values.kind &&
+    !["feature", "optional", "hotfix", "emergency"].includes(values.kind as string)
+  ) {
+    die("--kind must be one of: feature, optional, hotfix, emergency");
+  }
+  if (
+    values.stage &&
+    !["development", "preview", "staging", "production"].includes(values.stage as string)
+  ) {
+    die("--stage must be one of: development, preview, staging, production");
+  }
+  if (
+    values["immediate-apply"] &&
+    !["never", "wifi_only", "always"].includes(values["immediate-apply"] as string)
+  ) {
+    die("--immediate-apply must be one of: never, wifi_only, always");
+  }
 
   const config = await loadConfig();
   if (!config.server) die("AIRLOCK_SERVER not set. Run `airlock init` or set the env var.");
@@ -109,6 +139,36 @@ export async function publish(args: string[]) {
 
   const updateId = crypto.randomUUID();
   const now = new Date().toISOString();
+  const tags =
+    typeof values.tags === "string"
+      ? values.tags
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean)
+      : undefined;
+  const minBandwidthKbps =
+    typeof values["min-bandwidth"] === "string"
+      ? Number(values["min-bandwidth"])
+      : undefined;
+  if (
+    values["min-bandwidth"] &&
+    (typeof minBandwidthKbps !== "number" ||
+      !Number.isFinite(minBandwidthKbps) ||
+      minBandwidthKbps < 0)
+  ) {
+    die("--min-bandwidth must be a non-negative number");
+  }
+  const targeting =
+    values.cohort || values["immediate-apply"] || Number.isFinite(minBandwidthKbps)
+      ? {
+          cohort: values.cohort as string | undefined,
+          immediateApply: values["immediate-apply"] as "never" | "wifi_only" | "always" | undefined,
+          minBandwidthKbps:
+            typeof minBandwidthKbps === "number" && Number.isFinite(minBandwidthKbps)
+              ? minBandwidthKbps
+              : undefined,
+        }
+      : undefined;
 
   const manifest = {
     id: updateId,
@@ -139,6 +199,10 @@ export async function publish(args: string[]) {
       channel: values.channel ?? "default",
       message: values.message,
       critical: values.critical ?? false,
+      kind: values.kind,
+      stage: values.stage,
+      tags,
+      targeting,
       rolloutPercentage: values.rollout ? parseInt(values.rollout as string) : 100,
       assets,
     },

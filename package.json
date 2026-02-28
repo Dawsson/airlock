@@ -30,7 +30,8 @@
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
     "e2e:server": "bun run src/e2e/local-server.ts",
-    "e2e:ios-ota": "bun run src/e2e/ios-ota-loop.ts"
+    "e2e:ios-ota": "bun run src/e2e/ios-ota-loop.ts",
+    "e2e:advanced": "bun run src/e2e/advanced-features.ts"
   },
   "license": "MIT",
   "dependencies": {

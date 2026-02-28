@@ -9,6 +9,7 @@ const simulatorName = process.env.AIRLOCK_E2E_SIMULATOR ?? "iPhone 17 Pro";
 const port = process.env.AIRLOCK_E2E_PORT ?? "8788";
 const token = process.env.AIRLOCK_E2E_TOKEN ?? "local-dev-token";
 const runtime = process.env.AIRLOCK_E2E_RUNTIME ?? "1.0.0";
+const reportPath = join(root, "e2e", "ios-ota-report.json");
 
 type OtaStatus = {
   marker: string;
@@ -40,6 +41,17 @@ function run(cmd: string[], cwd = root, env?: Record<string, string>, allowFail 
   }
 
   return stdout;
+}
+
+async function timeStep<T>(
+  timings: Array<{ step: string; ms: number }>,
+  step: string,
+  fn: () => Promise<T> | T
+): Promise<T> {
+  const start = Date.now();
+  const result = await fn();
+  timings.push({ step, ms: Date.now() - start });
+  return result;
 }
 
 async function waitForServer(url: string, timeoutMs = 10_000) {
@@ -146,6 +158,8 @@ function launchAndReadStatus(): OtaStatus {
 
 async function main() {
   ensureFixture();
+  const timings: Array<{ step: string; ms: number }> = [];
+  const startedAt = new Date().toISOString();
 
   const serverProc = Bun.spawn(
     ["bun", "run", "src/e2e/local-server.ts"],
@@ -162,27 +176,54 @@ async function main() {
   );
 
   try {
-    await waitForServer(`http://127.0.0.1:${port}/health`);
+    await timeStep(timings, "wait_for_server", () =>
+      waitForServer(`http://127.0.0.1:${port}/health`)
+    );
 
-    await exportAndPublish("v1", "fixture v1");
-    await buildRelease("v1");
+    await timeStep(timings, "export_publish_v1", () =>
+      exportAndPublish("v1", "fixture v1")
+    );
+    await timeStep(timings, "build_release_v1", () => buildRelease("v1"));
 
-    const firstLaunch = launchAndReadStatus();
+    const firstLaunch = await timeStep(timings, "first_launch", () =>
+      Promise.resolve(launchAndReadStatus())
+    );
     if (firstLaunch.marker !== "v1") {
       throw new Error(`expected first launch marker=v1, got ${firstLaunch.marker}`);
     }
 
-    await exportAndPublish("v2", "fixture v2");
+    await timeStep(timings, "export_publish_v2", () =>
+      exportAndPublish("v2", "fixture v2")
+    );
 
-    const secondLaunch = launchAndReadStatus();
+    const secondLaunch = await timeStep(timings, "second_launch", () =>
+      Promise.resolve(launchAndReadStatus())
+    );
     if (secondLaunch.checkResult !== "update-fetched" && secondLaunch.checkResult !== "up-to-date") {
       throw new Error(`expected second launch to fetch/update, got ${secondLaunch.checkResult}`);
     }
 
-    const thirdLaunch = launchAndReadStatus();
+    const thirdLaunch = await timeStep(timings, "third_launch", () =>
+      Promise.resolve(launchAndReadStatus())
+    );
     if (thirdLaunch.marker !== "v2") {
       throw new Error(`expected third launch marker=v2, got ${thirdLaunch.marker}`);
     }
+
+    const totalMs = timings.reduce((sum, item) => sum + item.ms, 0);
+    const report = {
+      startedAt,
+      completedAt: new Date().toISOString(),
+      totalMs,
+      timings,
+      launches: {
+        first: firstLaunch,
+        second: secondLaunch,
+        third: thirdLaunch,
+      },
+    };
+    await Bun.write(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`[airlock-e2e] timing report written to ${reportPath}`);
 
     console.log("PASS: iOS OTA loop complete (v1 -> v2).");
   } finally {

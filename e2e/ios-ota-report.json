@@ -1,0 +1,67 @@
+{
+  "startedAt": "2026-02-28T17:54:19.868Z",
+  "completedAt": "2026-02-28T17:55:25.516Z",
+  "totalMs": 65647,
+  "timings": [
+    {
+      "step": "wait_for_server",
+      "ms": 270
+    },
+    {
+      "step": "export_publish_v1",
+      "ms": 6959
+    },
+    {
+      "step": "build_release_v1",
+      "ms": 25798
+    },
+    {
+      "step": "first_launch",
+      "ms": 8437
+    },
+    {
+      "step": "export_publish_v2",
+      "ms": 7341
+    },
+    {
+      "step": "second_launch",
+      "ms": 8420
+    },
+    {
+      "step": "third_launch",
+      "ms": 8422
+    }
+  ],
+  "launches": {
+    "first": {
+      "marker": "v1",
+      "runtimeVersion": "1.0.0",
+      "updateId": "e15cd0be-ec87-46ce-9cd2-a2bf73618a0f",
+      "isEmbeddedLaunch": true,
+      "checkResult": "up-to-date",
+      "fetchedUpdateId": null,
+      "error": null,
+      "timestamp": "2026-02-28T17:54:53.779Z"
+    },
+    "second": {
+      "marker": "v2",
+      "runtimeVersion": "1.0.0",
+      "updateId": "97d17151-a97a-4523-bbba-56ed8bc7d46f",
+      "isEmbeddedLaunch": false,
+      "checkResult": "up-to-date",
+      "fetchedUpdateId": null,
+      "error": null,
+      "timestamp": "2026-02-28T17:55:09.622Z"
+    },
+    "third": {
+      "marker": "v2",
+      "runtimeVersion": "1.0.0",
+      "updateId": "97d17151-a97a-4523-bbba-56ed8bc7d46f",
+      "isEmbeddedLaunch": false,
+      "checkResult": "up-to-date",
+      "fetchedUpdateId": null,
+      "error": null,
+      "timestamp": "2026-02-28T17:55:17.941Z"
+    }
+  }
+}
