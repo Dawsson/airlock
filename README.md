@@ -112,6 +112,8 @@ airlock publish --platform ios --runtime 1.0.0 --kind emergency --stage producti
 
 # Manage updates
 airlock list --platform ios --runtime 1.0.0
+airlock metrics overview --platform ios --runtime 1.0.0
+airlock metrics segments --platform ios --runtime 1.0.0 --from 2026-02-01T00:00:00.000Z --to 2026-02-28T23:59:59.000Z
 airlock promote --from staging --to production --platform ios --runtime 1.0.0
 airlock rollout --platform ios --runtime 1.0.0 --update-id <id> --percentage 50
 airlock rollback --platform ios --runtime 1.0.0
@@ -413,6 +415,14 @@ All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is
 | `GET`  | `/admin/metrics/segments` | Read cohort/stage/network/bandwidth/trust slices |
 | `GET`  | `/admin/updates`       | List update history for a channel/rv/platform        |
 | `GET`  | `/admin/status`        | Overview of all deployed updates across all channels |
+
+CLI equivalents:
+
+- `airlock metrics overview --platform ios --runtime 1.0.0`
+- `airlock metrics timings --platform ios --runtime 1.0.0`
+- `airlock metrics adoption --platform ios --runtime 1.0.0`
+- `airlock metrics failures --platform ios --runtime 1.0.0`
+- `airlock metrics segments --platform ios --runtime 1.0.0`
 
 ## Metrics Storage Guidance
 

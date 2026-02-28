@@ -6,6 +6,7 @@ import { rollback } from "./cli/rollback";
 import { rollout } from "./cli/rollout";
 import { list } from "./cli/list";
 import { status } from "./cli/status";
+import { metrics } from "./cli/metrics";
 import { keygen } from "./cli/keygen";
 import { init } from "./cli/init";
 
@@ -20,6 +21,7 @@ Commands:
   rollback    Roll back to the previous update
   rollout     Set rollout percentage for an update
   list        List update history for a specific channel/platform/runtime
+  metrics     Query dashboard metrics endpoints
   keygen      Generate RSA-2048 signing key pair
   init        Initialize airlock config in your project
 
@@ -47,6 +49,7 @@ const commands: Record<string, (args: string[]) => Promise<void>> = {
   rollback,
   rollout,
   list,
+  metrics,
   keygen,
   init,
 };
