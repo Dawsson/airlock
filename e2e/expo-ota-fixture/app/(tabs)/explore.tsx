@@ -1,4 +1,3 @@
-import { Image } from 'expo-image';
 import {
   BottomSheet,
   Button as SwiftButton,
@@ -17,168 +16,115 @@ import {
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
 import { useState } from 'react';
-import { Platform, StyleSheet } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
-import { Collapsible } from '@/components/ui/collapsible';
-import { ExternalLink } from '@/components/external-link';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Fonts } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export default function TabTwoScreen() {
+export default function ExploreScreen() {
   const [isLiquidSheetPresented, setIsLiquidSheetPresented] = useState(false);
+  const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
 
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
-      headerImage={
-        <IconSymbol
-          size={310}
-          color="#808080"
-          name="chevron.left.forwardslash.chevron.right"
-          style={styles.headerImage}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText
-          type="title"
-          style={{
-            fontFamily: Fonts.rounded,
-          }}>
-          Explore
-        </ThemedText>
-      </ThemedView>
-      <ThemedText>This app includes example code to help you get started.</ThemedText>
-      <Collapsible title="Native SwiftUI Liquid Glass sheet (iOS)">
-        {Platform.OS === 'ios' ? (
-          <Host style={styles.swiftUIHost}>
-            <SwiftButton
-              label="Open Native Liquid Glass Sheet"
-              onPress={() => setIsLiquidSheetPresented(true)}
-              modifiers={[buttonStyle('glassProminent')]}
-            />
-            <BottomSheet
-              isPresented={isLiquidSheetPresented}
-              onIsPresentedChange={setIsLiquidSheetPresented}
-              fitToContents>
-              <Group
-                modifiers={[
-                  presentationDetents([{ fraction: 0.35 }, 'medium', 'large']),
-                  presentationDragIndicator('visible'),
-                  padding({ all: 16 }),
-                  glassEffect({
-                    glass: {
-                      variant: 'regular',
-                      interactive: true,
-                    },
-                    shape: 'roundedRectangle',
-                    cornerRadius: 24,
-                  }),
-                ]}>
-                <VStack spacing={12} alignment="leading">
-                  <SwiftText modifiers={[font({ size: 20, weight: 'semibold', design: 'rounded' })]}>
-                    Liquid Glass Sheet
-                  </SwiftText>
-                  <SwiftText modifiers={[foregroundStyle('#6B7280')]}>
-                    This sheet is rendered natively in SwiftUI via @expo/ui.
-                  </SwiftText>
-                  <SwiftButton
-                    label="Close"
-                    onPress={() => setIsLiquidSheetPresented(false)}
-                    modifiers={[buttonStyle('glass')]}
-                  />
-                </VStack>
-              </Group>
-            </BottomSheet>
-          </Host>
-        ) : (
-          <ThemedText>
-            This demo uses SwiftUI primitives and runs on iOS builds.
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.container}>
+        <ThemedView style={styles.heroCard}>
+          <ThemedText type="title">Native Liquid Glass Sheet</ThemedText>
+          <ThemedText style={styles.subtitle}>
+            This Explorer tab now focuses on the iOS native SwiftUI sheet demo.
           </ThemedText>
-        )}
-      </Collapsible>
-      <Collapsible title="File-based routing">
-        <ThemedText>
-          This app has two screens:{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">app/(tabs)/explore.tsx</ThemedText>
-        </ThemedText>
-        <ThemedText>
-          The layout file in <ThemedText type="defaultSemiBold">app/(tabs)/_layout.tsx</ThemedText>{' '}
-          sets up the tab navigator.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/router/introduction">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Android, iOS, and web support">
-        <ThemedText>
-          You can open this project on Android, iOS, and the web. To open the web version, press{' '}
-          <ThemedText type="defaultSemiBold">w</ThemedText> in the terminal running this project.
-        </ThemedText>
-      </Collapsible>
-      <Collapsible title="Images">
-        <ThemedText>
-          For static images, you can use the <ThemedText type="defaultSemiBold">@2x</ThemedText> and{' '}
-          <ThemedText type="defaultSemiBold">@3x</ThemedText> suffixes to provide files for
-          different screen densities
-        </ThemedText>
-        <Image
-          source={require('@/assets/images/react-logo.png')}
-          style={{ width: 100, height: 100, alignSelf: 'center' }}
-        />
-        <ExternalLink href="https://reactnative.dev/docs/images">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Light and dark mode components">
-        <ThemedText>
-          This template has light and dark mode support. The{' '}
-          <ThemedText type="defaultSemiBold">useColorScheme()</ThemedText> hook lets you inspect
-          what the user&apos;s current color scheme is, and so you can adjust UI colors accordingly.
-        </ThemedText>
-        <ExternalLink href="https://docs.expo.dev/develop/user-interface/color-themes/">
-          <ThemedText type="link">Learn more</ThemedText>
-        </ExternalLink>
-      </Collapsible>
-      <Collapsible title="Animations">
-        <ThemedText>
-          This template includes an example of an animated component. The{' '}
-          <ThemedText type="defaultSemiBold">components/HelloWave.tsx</ThemedText> component uses
-          the powerful{' '}
-          <ThemedText type="defaultSemiBold" style={{ fontFamily: Fonts.mono }}>
-            react-native-reanimated
-          </ThemedText>{' '}
-          library to create a waving hand animation.
-        </ThemedText>
-        {Platform.select({
-          ios: (
-            <ThemedText>
-              The <ThemedText type="defaultSemiBold">components/ParallaxScrollView.tsx</ThemedText>{' '}
-              component provides a parallax effect for the header image.
+
+          {Platform.OS === 'ios' ? (
+            <Pressable
+              style={[styles.primaryButton, { backgroundColor: palette.tint }]}
+              onPress={() => setIsLiquidSheetPresented(true)}>
+              <ThemedText style={styles.primaryButtonText}>Open Native Liquid Glass Sheet</ThemedText>
+            </Pressable>
+          ) : (
+            <ThemedText style={styles.subtitle}>
+              This button opens a native SwiftUI sheet and is available on iOS builds.
             </ThemedText>
-          ),
-        })}
-      </Collapsible>
-    </ParallaxScrollView>
+          )}
+        </ThemedView>
+      </ScrollView>
+
+      {Platform.OS === 'ios' ? (
+        <Host style={styles.sheetHost}>
+          <BottomSheet
+            isPresented={isLiquidSheetPresented}
+            onIsPresentedChange={setIsLiquidSheetPresented}>
+            <Group
+              modifiers={[
+                presentationDetents(['medium', 'large']),
+                presentationDragIndicator('visible'),
+                padding({ all: 24 }),
+                glassEffect({
+                  glass: {
+                    variant: 'regular',
+                    interactive: true,
+                  },
+                  shape: 'roundedRectangle',
+                  cornerRadius: 28,
+                }),
+              ]}>
+              <VStack spacing={16} alignment="center">
+                <SwiftText modifiers={[font({ size: 24, weight: 'semibold', design: 'rounded' })]}>
+                  Liquid Glass
+                </SwiftText>
+                <SwiftText modifiers={[foregroundStyle('#6B7280')]}>
+                  Native SwiftUI BottomSheet from @expo/ui.
+                </SwiftText>
+                <SwiftButton
+                  label="Close"
+                  onPress={() => setIsLiquidSheetPresented(false)}
+                  modifiers={[buttonStyle('glassProminent')]}
+                />
+              </VStack>
+            </Group>
+          </BottomSheet>
+        </Host>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerImage: {
-    color: '#808080',
-    bottom: -90,
-    left: -35,
+  screen: {
+    flex: 1,
+  },
+  container: {
+    padding: 20,
+    paddingTop: 28,
+    paddingBottom: 40,
+  },
+  heroCard: {
+    padding: 24,
+    borderRadius: 20,
+    gap: 14,
+  },
+  subtitle: {
+    lineHeight: 22,
+  },
+  primaryButton: {
+    marginTop: 10,
+    minHeight: 56,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  primaryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  sheetHost: {
     position: 'absolute',
-  },
-  titleContainer: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  swiftUIHost: {
-    width: '100%',
-    gap: 12,
+    width: 1,
+    height: 1,
+    opacity: 0,
   },
 });
