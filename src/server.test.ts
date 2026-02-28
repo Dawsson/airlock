@@ -137,6 +137,35 @@ describe("airlock", () => {
     expect(res.status).toBe(204);
   });
 
+  test("does not serve older update when client already runs latest", async () => {
+    const older = makeUpdate({
+      manifest: {
+        ...makeUpdate().manifest,
+        id: "update-older",
+        createdAt: "2025-01-01T00:00:00Z",
+      },
+      createdAt: "2025-01-01T00:00:00Z",
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+    const latest = makeUpdate({
+      manifest: {
+        ...makeUpdate().manifest,
+        id: "update-latest",
+        createdAt: "2025-01-02T00:00:00Z",
+      },
+      createdAt: "2025-01-02T00:00:00Z",
+      updatedAt: "2025-01-02T00:00:00Z",
+    });
+
+    await adapter.publishUpdate("default", "1.0.0", "ios", older);
+    await adapter.publishUpdate("default", "1.0.0", "ios", latest);
+
+    const res = await manifestRequest(app, {
+      "expo-current-update-id": "update-latest",
+    });
+    expect(res.status).toBe(204);
+  });
+
   test("channel defaults to 'default'", async () => {
     await adapter.publishUpdate("default", "1.0.0", "ios", makeUpdate());
     const res = await manifestRequest(app);

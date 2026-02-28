@@ -286,9 +286,15 @@ export function createAirlock(config: AirlockConfig) {
       : [];
     const healthByUpdate = new Map(healthRows.map((row) => [row.updateId, row]));
     let update: StoredUpdate | null = null;
+    const currentIndex = currentUpdateId
+      ? history.findIndex((entry) => entry.manifest.id === currentUpdateId)
+      : -1;
+    // Never "downgrade" by serving updates older than the currently running one.
+    // History is expected newest-first, so only candidates before currentIndex are newer.
+    const candidates =
+      currentIndex >= 0 ? history.slice(0, currentIndex) : history;
 
-    for (const candidate of history) {
-      if (currentUpdateId && candidate.manifest.id === currentUpdateId) continue;
+    for (const candidate of candidates) {
       if (!matchesTargeting(candidate, ctx)) continue;
       if (candidate.rolloutPercentage < 100) {
         const inRollout = await isInRollout(
