@@ -10,8 +10,8 @@ import {
   buttonStyle,
   font,
   foregroundStyle,
-  glassEffect,
   padding,
+  presentationBackgroundInteraction,
   presentationDetents,
   presentationDragIndicator,
 } from '@expo/ui/swift-ui/modifiers';
@@ -58,17 +58,10 @@ export default function ExploreScreen() {
             onIsPresentedChange={setIsLiquidSheetPresented}>
             <Group
               modifiers={[
-                presentationDetents(['medium', 'large']),
+                presentationDetents(['medium']),
                 presentationDragIndicator('visible'),
-                padding({ all: 24 }),
-                glassEffect({
-                  glass: {
-                    variant: 'regular',
-                    interactive: true,
-                  },
-                  shape: 'roundedRectangle',
-                  cornerRadius: 28,
-                }),
+                presentationBackgroundInteraction('enabled'),
+                padding({ top: 12, bottom: 28, horizontal: 24 }),
               ]}>
               <VStack spacing={16} alignment="center">
                 <SwiftText modifiers={[font({ size: 24, weight: 'semibold', design: 'rounded' })]}>
