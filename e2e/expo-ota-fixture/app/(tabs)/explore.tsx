@@ -1,32 +1,36 @@
-import {
-  BottomSheet,
-  Button as SwiftButton,
-  Group,
-  Host,
-  Text as SwiftText,
-  VStack,
-} from '@expo/ui/swift-ui';
-import {
-  buttonStyle,
-  font,
-  foregroundStyle,
-  padding,
-  presentationBackgroundInteraction,
-  presentationDetents,
-  presentationDragIndicator,
-} from '@expo/ui/swift-ui/modifiers';
-import { useState } from 'react';
-import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { NativeModules, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
+type SwiftUIPack = {
+  ui: any;
+  modifiers: any;
+} | null;
+
+function loadSwiftUI(): SwiftUIPack {
+  if (Platform.OS !== 'ios' || !(NativeModules as { ExpoUI?: unknown }).ExpoUI) {
+    return null;
+  }
+  try {
+    return {
+      ui: require('@expo/ui/swift-ui'),
+      modifiers: require('@expo/ui/swift-ui/modifiers'),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function ExploreScreen() {
   const [isLiquidSheetPresented, setIsLiquidSheetPresented] = useState(false);
   const colorScheme = useColorScheme();
   const palette = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
+  const swiftUI = useMemo(() => loadSwiftUI(), []);
+  const canUseSwiftUISheet = !!swiftUI;
 
   return (
     <View style={styles.screen}>
@@ -34,10 +38,10 @@ export default function ExploreScreen() {
         <ThemedView style={styles.heroCard}>
           <ThemedText type="title">Native Liquid Glass Sheet</ThemedText>
           <ThemedText style={styles.subtitle}>
-            This Explorer tab now focuses on the iOS native SwiftUI sheet demo.
+            This Explorer tab focuses on the iOS native SwiftUI sheet demo.
           </ThemedText>
 
-          {Platform.OS === 'ios' ? (
+          {canUseSwiftUISheet ? (
             <Pressable
               style={[styles.primaryButton, { backgroundColor: palette.tint }]}
               onPress={() => setIsLiquidSheetPresented(true)}>
@@ -45,40 +49,41 @@ export default function ExploreScreen() {
             </Pressable>
           ) : (
             <ThemedText style={styles.subtitle}>
-              This button opens a native SwiftUI sheet and is available on iOS builds.
+              Native SwiftUI sheet is unavailable in this installed binary.
             </ThemedText>
           )}
         </ThemedView>
       </ScrollView>
 
-      {Platform.OS === 'ios' ? (
-        <Host style={styles.sheetHost}>
-          <BottomSheet
+      {canUseSwiftUISheet ? (
+        <swiftUI.ui.Host style={styles.sheetHost}>
+          <swiftUI.ui.BottomSheet
             isPresented={isLiquidSheetPresented}
             onIsPresentedChange={setIsLiquidSheetPresented}>
-            <Group
+            <swiftUI.ui.Group
               modifiers={[
-                presentationDetents(['medium']),
-                presentationDragIndicator('visible'),
-                presentationBackgroundInteraction('enabled'),
-                padding({ top: 12, bottom: 28, horizontal: 24 }),
+                swiftUI.modifiers.presentationDetents(['medium']),
+                swiftUI.modifiers.presentationDragIndicator('visible'),
+                swiftUI.modifiers.presentationBackgroundInteraction('enabled'),
+                swiftUI.modifiers.padding({ top: 12, bottom: 28, horizontal: 24 }),
               ]}>
-              <VStack spacing={16} alignment="center">
-                <SwiftText modifiers={[font({ size: 24, weight: 'semibold', design: 'rounded' })]}>
+              <swiftUI.ui.VStack spacing={16} alignment="center">
+                <swiftUI.ui.Text
+                  modifiers={[swiftUI.modifiers.font({ size: 24, weight: 'semibold', design: 'rounded' })]}>
                   Liquid Glass
-                </SwiftText>
-                <SwiftText modifiers={[foregroundStyle('#6B7280')]}>
+                </swiftUI.ui.Text>
+                <swiftUI.ui.Text modifiers={[swiftUI.modifiers.foregroundStyle('#6B7280')]}>
                   Native SwiftUI BottomSheet from @expo/ui.
-                </SwiftText>
-                <SwiftButton
+                </swiftUI.ui.Text>
+                <swiftUI.ui.Button
                   label="Close"
                   onPress={() => setIsLiquidSheetPresented(false)}
-                  modifiers={[buttonStyle('glassProminent')]}
+                  modifiers={[swiftUI.modifiers.buttonStyle('glassProminent')]}
                 />
-              </VStack>
-            </Group>
-          </BottomSheet>
-        </Host>
+              </swiftUI.ui.VStack>
+            </swiftUI.ui.Group>
+          </swiftUI.ui.BottomSheet>
+        </swiftUI.ui.Host>
       ) : null}
     </View>
   );
