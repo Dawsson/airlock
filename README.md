@@ -61,6 +61,7 @@ const airlock = createAirlock({
   }),
   adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
   clientEventToken: (env: Env) => env.AIRLOCK_CLIENT_EVENT_TOKEN,
+  metricsAuth: (req) => req.headers.get("x-internal-dashboard-key") === "allow",
 })
 
 // Returns a standard WinterCG fetch handler with basePath prefix stripping built in.
@@ -204,6 +205,7 @@ Override with env vars:
 - Immediate-apply hint in manifest `extra.immediateApply` (`never|fast_connection|always`)
 - Telemetry ingestion endpoint for launch/apply/download events
 - Health stats endpoint (crash rate + timing aggregates)
+- Authenticated metrics endpoints for dashboard queries (`/admin/metrics/*`)
 - Automatic unhealthy-update blocking based on crash-rate thresholds
 - `resolveUpdate` hook for custom logic (A/B testing, feature flags, user targeting)
 - `onEvent` hook for analytics and logging
@@ -279,6 +281,28 @@ Add the public key to your Expo app's `app.json`:
 }
 ```
 
+### onTelemetryBatch
+
+Use this to forward ingested telemetry to external analytics sinks (Cloudflare
+Analytics Engine, PostHog pipeline, etc.) without coupling Airlock core to any
+specific vendor.
+
+```ts
+createAirlock({
+  adapter,
+  onTelemetryBatch(events, context) {
+    // context.trusted -> true for /admin/client-events, false for public /events
+    // context.ip -> client IP when available
+    // Fire your own async write path here
+    void events
+    void context
+  },
+})
+```
+
+If this hook throws, Airlock swallows the error and emits
+`telemetry_export_failed` via `onEvent`.
+
 ### Crash Gating Policy
 
 Configure automatic unhealthy update blocking:
@@ -338,6 +362,36 @@ Trusted telemetry endpoint:
 
 - `POST /admin/client-events` (admin token required)
 - events are always marked trusted for stability decisions
+- events derive `bandwidthBucket` (`unknown|low|medium|high|very_high`) server-side
+
+## Metrics API
+
+Dashboard-oriented, authenticated metrics endpoints:
+
+- `GET /admin/metrics/overview`
+- `GET /admin/metrics/timings`
+- `GET /admin/metrics/adoption`
+- `GET /admin/metrics/failures`
+- `GET /admin/metrics/segments`
+
+Shared query params:
+
+- `runtimeVersion` (required)
+- `platform` (required: `ios|android`)
+- `channel` (optional, default `default`)
+- `from` / `to` (optional ISO timestamps; default rolling 24h)
+- `limit` (optional, default 50, max 500)
+
+Query guardrails:
+
+- max window: 30 days
+- invalid ranges or missing required params return `400`
+
+Auth behavior:
+
+- if `metricsAuth` is configured, it is used for `/admin/metrics/*`
+- otherwise metrics routes use normal admin bearer auth
+- metrics routes are never public in this release
 
 ## Admin API
 
@@ -352,8 +406,21 @@ All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is
 | `POST` | `/admin/rollback`      | Revert to previous update                            |
 | `POST` | `/admin/client-events` | Record trusted client launch/download/apply telemetry |
 | `GET`  | `/admin/health`        | Read per-update crash-rate and timing aggregates     |
+| `GET`  | `/admin/metrics/overview` | Read aggregate event/crash summary                |
+| `GET`  | `/admin/metrics/timings`  | Read check/download/apply timing distributions    |
+| `GET`  | `/admin/metrics/adoption` | Read per-update launch/adoption counters          |
+| `GET`  | `/admin/metrics/failures` | Read per-update failure/error breakdown           |
+| `GET`  | `/admin/metrics/segments` | Read cohort/stage/network/bandwidth/trust slices |
 | `GET`  | `/admin/updates`       | List update history for a channel/rv/platform        |
 | `GET`  | `/admin/status`        | Overview of all deployed updates across all channels |
+
+## Metrics Storage Guidance
+
+- Store OTA bundles/assets in R2/object storage only.
+- Store queryable telemetry aggregates in adapter storage (DB/KV) for fast
+  dashboard reads.
+- Keep raw, high-volume analytics in your own external sink if needed via
+  `onTelemetryBatch`.
 
 
 ## iOS Timing Baseline
