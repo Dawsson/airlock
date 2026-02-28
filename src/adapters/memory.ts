@@ -22,6 +22,10 @@ export class MemoryAdapter implements StorageAdapter {
       {
         totalLaunches: number;
         failedLaunches: number;
+        trustedLaunches: number;
+        trustedFailedLaunches: number;
+        weightedLaunches: number;
+        weightedFailedLaunches: number;
         downloadSamples: number;
         applySamples: number;
         downloadTotalMs: number;
@@ -149,6 +153,10 @@ export class MemoryAdapter implements StorageAdapter {
       const existing = byUpdate.get(event.updateId) ?? {
         totalLaunches: 0,
         failedLaunches: 0,
+        trustedLaunches: 0,
+        trustedFailedLaunches: 0,
+        weightedLaunches: 0,
+        weightedFailedLaunches: 0,
         downloadSamples: 0,
         applySamples: 0,
         downloadTotalMs: 0,
@@ -156,12 +164,22 @@ export class MemoryAdapter implements StorageAdapter {
         lastSeenAt: new Date().toISOString(),
       };
 
+      const trusted = event.trusted ?? true;
+      const weight = Math.max(0, Math.min(1, event.trustWeight ?? (trusted ? 1 : 0.25)));
       if (event.type === "launch") {
         existing.totalLaunches += 1;
+        if (trusted) existing.trustedLaunches += 1;
+        existing.weightedLaunches += weight;
       }
       if (event.type === "launch_failed") {
         existing.totalLaunches += 1;
         existing.failedLaunches += 1;
+        if (trusted) {
+          existing.trustedLaunches += 1;
+          existing.trustedFailedLaunches += 1;
+        }
+        existing.weightedLaunches += weight;
+        existing.weightedFailedLaunches += weight;
       }
       if (event.type === "update_downloaded" && typeof event.durationMs === "number") {
         existing.downloadSamples += 1;
@@ -193,6 +211,18 @@ export class MemoryAdapter implements StorageAdapter {
         totalLaunches: stats.totalLaunches,
         failedLaunches: stats.failedLaunches,
         crashRate: stats.totalLaunches > 0 ? stats.failedLaunches / stats.totalLaunches : 0,
+        trustedLaunches: stats.trustedLaunches,
+        trustedFailedLaunches: stats.trustedFailedLaunches,
+        trustedCrashRate:
+          stats.trustedLaunches > 0
+            ? stats.trustedFailedLaunches / stats.trustedLaunches
+            : 0,
+        weightedLaunches: Number(stats.weightedLaunches.toFixed(3)),
+        weightedFailedLaunches: Number(stats.weightedFailedLaunches.toFixed(3)),
+        weightedCrashRate:
+          stats.weightedLaunches > 0
+            ? stats.weightedFailedLaunches / stats.weightedLaunches
+            : 0,
         avgDownloadMs:
           stats.downloadSamples > 0
             ? Math.round(stats.downloadTotalMs / stats.downloadSamples)

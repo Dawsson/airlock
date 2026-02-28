@@ -29,7 +29,7 @@ export type UpdateTargeting = {
   /** Allowed app stages for this update */
   allowedStages?: UpdateStage[];
   /** Hint to client for when to apply fetched update */
-  immediateApply?: "never" | "wifi_only" | "always";
+  immediateApply?: "never" | "fast_connection" | "always";
 };
 
 /** A stored update with rollout metadata */
@@ -67,6 +67,15 @@ export type ClientEvent = {
   appliedFromEmbedded?: boolean;
   error?: string;
   timestamp?: string;
+  /** Whether this event is trusted for stability decisions. */
+  trusted?: boolean;
+  /**
+   * Optional raw trust score supplied by caller.
+   * Can be 0..1, 0..100, or 0..1000 depending on deployment.
+   */
+  trustScore?: number;
+  /** Normalized trust weight (0..1) computed by the server. */
+  trustWeight?: number;
 };
 
 export type UpdateHealth = {
@@ -74,6 +83,12 @@ export type UpdateHealth = {
   totalLaunches: number;
   failedLaunches: number;
   crashRate: number;
+  trustedLaunches: number;
+  trustedFailedLaunches: number;
+  trustedCrashRate: number;
+  weightedLaunches: number;
+  weightedFailedLaunches: number;
+  weightedCrashRate: number;
   avgDownloadMs: number | null;
   avgApplyMs: number | null;
   lastSeenAt: string;
@@ -224,6 +239,12 @@ export type AirlockConfig = {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   adminToken?: string | ((env: any) => string | undefined);
+  /**
+   * Optional lightweight token for public client telemetry endpoint (`POST /events`).
+   * Keep unset to allow unauthenticated telemetry ingestion.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  clientEventToken?: string | ((env: any) => string | undefined);
   resolveUpdate?: (
     update: StoredUpdate,
     context: UpdateContext
@@ -236,6 +257,35 @@ export type AirlockConfig = {
     minLaunchesForBlocking?: number;
     /** Crash-rate threshold (failed / total) to block (default: 0.2). */
     crashRateThreshold?: number;
+    /** Allow auto-blocking from unauthenticated telemetry (default: false). */
+    useUntrustedTelemetry?: boolean;
+  };
+  telemetry?: {
+    /**
+     * Enable public telemetry ingestion endpoint (`POST /events`).
+     * Default: true when adapter supports telemetry.
+     */
+    enablePublicEndpoint?: boolean;
+    /** Max accepted events per request (default: 20). */
+    maxEventsPerRequest?: number;
+    /** Max accepted request body size in bytes (default: 32768). */
+    maxBodyBytes?: number;
+    /** Allowed timestamp skew in milliseconds (default: 86400000 / 24h). */
+    maxTimestampSkewMs?: number;
+    /** Basic per-IP request throttle window (default: 60000 / 1m). */
+    rateLimitWindowMs?: number;
+    /** Basic per-IP request throttle cap per window (default: 120). */
+    rateLimitMaxRequests?: number;
+    /**
+     * Maximum trust influence for unauthenticated requests (default: 0.25).
+     * Prevents public actors from dominating auto-block decisions.
+     */
+    maxUntrustedWeight?: number;
+    /**
+     * Optional custom trust-score normalizer.
+     * Should return a value between 0 and 1.
+     */
+    normalizeTrustScore?: (score: number, event: ClientEvent) => number;
   };
   signingKey?: CryptoKey;
   signingKeyId?: string;

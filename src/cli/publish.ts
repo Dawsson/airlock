@@ -18,7 +18,7 @@ Options:
   --tags           Comma-separated tags
   --cohort         Optional cohort identifier for A/B targeting
   --min-bandwidth  Minimum required bandwidth in kbps
-  --immediate-apply Apply hint: never|wifi_only|always
+  --immediate-apply Apply hint: never|fast_connection|always
   --critical        Mark as critical update
   --rollout         Rollout percentage (default: 100)`;
 
@@ -65,9 +65,9 @@ export async function publish(args: string[]) {
   }
   if (
     values["immediate-apply"] &&
-    !["never", "wifi_only", "always"].includes(values["immediate-apply"] as string)
+    !["never", "fast_connection", "always"].includes(values["immediate-apply"] as string)
   ) {
-    die("--immediate-apply must be one of: never, wifi_only, always");
+    die("--immediate-apply must be one of: never, fast_connection, always");
   }
 
   const config = await loadConfig();
@@ -162,7 +162,7 @@ export async function publish(args: string[]) {
     values.cohort || values["immediate-apply"] || Number.isFinite(minBandwidthKbps)
       ? {
           cohort: values.cohort as string | undefined,
-          immediateApply: values["immediate-apply"] as "never" | "wifi_only" | "always" | undefined,
+          immediateApply: values["immediate-apply"] as "never" | "fast_connection" | "always" | undefined,
           minBandwidthKbps:
             typeof minBandwidthKbps === "number" && Number.isFinite(minBandwidthKbps)
               ? minBandwidthKbps

@@ -33,6 +33,12 @@ function resolveAdminToken(config: AirlockConfig, env: unknown): string | undefi
   return typeof config.adminToken === "function" ? config.adminToken(env) : config.adminToken;
 }
 
+function resolveClientEventToken(config: AirlockConfig, env: unknown): string | undefined {
+  return typeof config.clientEventToken === "function"
+    ? config.clientEventToken(env)
+    : config.clientEventToken;
+}
+
 function requireAuth(adminToken: string | undefined, header: string | undefined) {
   if (!adminToken) return true;
   const expected = `Bearer ${adminToken}`;
@@ -91,6 +97,79 @@ function parseNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseExpoExtraParams(header: string | undefined): Record<string, string> {
+  if (!header) return {};
+  const out: Record<string, string> = {};
+  // Structured-field dictionary form: key="value", key2="value2"
+  const regex = /([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(header)) !== null) {
+    out[match[1]] = match[2];
+  }
+  return out;
+}
+
+function getClientIp(headers: Headers): string {
+  const cf = headers.get("cf-connecting-ip");
+  if (cf) return cf.trim();
+  const real = headers.get("x-real-ip");
+  if (real) return real.trim();
+  const forwarded = headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0]?.trim() || "unknown";
+  return "unknown";
+}
+
+function validateClientEvents(events: ClientEvent[], now = Date.now(), maxTimestampSkewMs = 86_400_000): string | null {
+  for (const event of events) {
+    if (!event.channel || event.channel.length > 100) return "Invalid channel";
+    if (!event.runtimeVersion || event.runtimeVersion.length > 100) return "Invalid runtimeVersion";
+    if (event.updateId && event.updateId.length > 128) return "Invalid updateId";
+    if (event.deviceId && event.deviceId.length > 256) return "Invalid deviceId";
+    if (event.error && event.error.length > 1024) return "Invalid error";
+    if (typeof event.trustScore === "number" && !Number.isFinite(event.trustScore)) {
+      return "Invalid trustScore";
+    }
+    if (typeof event.durationMs === "number" && (event.durationMs < 0 || event.durationMs > 600_000)) {
+      return "Invalid durationMs";
+    }
+    if (typeof event.bandwidthKbps === "number" && (event.bandwidthKbps < 0 || event.bandwidthKbps > 10_000_000)) {
+      return "Invalid bandwidthKbps";
+    }
+    if (event.timestamp) {
+      const ts = Date.parse(event.timestamp);
+      if (!Number.isFinite(ts)) return "Invalid timestamp";
+      if (Math.abs(now - ts) > maxTimestampSkewMs) return "Timestamp outside allowed skew window";
+    }
+  }
+  return null;
+}
+
+function defaultNormalizeTrustScore(score: number): number {
+  if (!Number.isFinite(score)) return 0;
+  if (score <= 1 && score >= 0) return score;
+  if (score <= 100 && score >= 0) return score / 100;
+  if (score <= 1000 && score >= 0) return score / 1000;
+  return Math.max(0, Math.min(1, score));
+}
+
+function getTrustWeight(
+  event: ClientEvent,
+  trustedRequest: boolean,
+  config: AirlockConfig
+): number {
+  if (trustedRequest) return 1;
+  const maxUntrustedWeight = config.telemetry?.maxUntrustedWeight ?? 0.25;
+  const raw = event.trustScore;
+  if (typeof raw !== "number") {
+    return maxUntrustedWeight;
+  }
+  const normalized = config.telemetry?.normalizeTrustScore
+    ? config.telemetry.normalizeTrustScore(raw, event)
+    : defaultNormalizeTrustScore(raw);
+  const safe = Math.max(0, Math.min(1, normalized));
+  return Math.min(maxUntrustedWeight, safe);
+}
+
 function matchesTargeting(update: StoredUpdate, ctx: UpdateContext): boolean {
   const targeting = update.targeting;
   if (!targeting) return true;
@@ -120,15 +199,19 @@ function isHealthBlocked(
   if (!autoBlock) return null;
   const minLaunches = config.stability?.minLaunchesForBlocking ?? 20;
   const crashRateThreshold = config.stability?.crashRateThreshold ?? 0.2;
+  const useUntrusted = config.stability?.useUntrustedTelemetry ?? false;
   const entry = health.get(updateId);
   if (!entry) return null;
-  if (entry.totalLaunches < minLaunches) return null;
-  if (entry.crashRate < crashRateThreshold) return null;
+  const launches = useUntrusted ? entry.weightedLaunches : entry.trustedLaunches;
+  const crashRate = useUntrusted ? entry.weightedCrashRate : entry.trustedCrashRate;
+  if (launches < minLaunches) return null;
+  if (crashRate < crashRateThreshold) return null;
   return entry;
 }
 
 export function createAirlock(config: AirlockConfig) {
   const app = new Hono();
+  const telemetryRate = new Map<string, { windowStart: number; count: number }>();
 
   // ─── Public: manifest ──────────────────────────────────────────────
 
@@ -157,9 +240,23 @@ export function createAirlock(config: AirlockConfig) {
       c.req.header("eas-client-id") ??
       "anonymous";
 
-    const stage = (c.req.header("x-airlock-stage") ?? null) as UpdateStage | null;
-    const cohort = c.req.header("x-airlock-cohort") ?? null;
-    const bandwidthKbps = parseNumber(c.req.header("x-airlock-bandwidth-kbps") ?? undefined);
+    const extraParams = parseExpoExtraParams(c.req.header("expo-extra-params"));
+    const stage = (
+      c.req.header("x-airlock-stage") ??
+      extraParams["airlock-stage"] ??
+      extraParams.stage ??
+      null
+    ) as UpdateStage | null;
+    const cohort =
+      c.req.header("x-airlock-cohort") ??
+      extraParams["airlock-cohort"] ??
+      extraParams.cohort ??
+      null;
+    const bandwidthKbps = parseNumber(
+      c.req.header("x-airlock-bandwidth-kbps") ??
+        extraParams["airlock-bandwidth-kbps"] ??
+        extraParams.bandwidthKbps
+    );
 
     const ctx: UpdateContext = {
       channel,
@@ -203,14 +300,17 @@ export function createAirlock(config: AirlockConfig) {
       }
       const blockedHealth = isHealthBlocked(candidate.manifest.id, healthByUpdate, config);
       if (blockedHealth) {
+        const useUntrusted = config.stability?.useUntrustedTelemetry ?? false;
         emit(config, {
           type: "update_auto_blocked",
           updateId: candidate.manifest.id,
           channel,
           runtimeVersion,
           platform,
-          crashRate: blockedHealth.crashRate,
-          launches: blockedHealth.totalLaunches,
+          crashRate: useUntrusted ? blockedHealth.weightedCrashRate : blockedHealth.trustedCrashRate,
+          launches: useUntrusted
+            ? Math.round(blockedHealth.weightedLaunches)
+            : blockedHealth.trustedLaunches,
         });
         continue;
       }
@@ -337,6 +437,106 @@ export function createAirlock(config: AirlockConfig) {
     }
 
     return c.redirect(redirectUrl);
+  });
+
+  // ─── Public: client telemetry ────────────────────────────────────
+
+  app.post("/events", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.recordClientEvents) {
+      return c.json({ error: "Adapter does not support telemetry storage" }, 501);
+    }
+    if (config.telemetry?.enablePublicEndpoint === false) {
+      return c.notFound();
+    }
+
+    const maxBodyBytes = config.telemetry?.maxBodyBytes ?? 32_768;
+    const lengthHeader = c.req.header("content-length");
+    if (lengthHeader) {
+      const length = Number(lengthHeader);
+      if (Number.isFinite(length) && length > maxBodyBytes) {
+        return c.json({ error: "Payload too large" }, 413);
+      }
+    }
+
+    const token = resolveClientEventToken(config, c.env);
+    if (!requireAuth(token, c.req.header("authorization"))) {
+      return c.json({ error: "Unauthorized" }, 401);
+    }
+
+    const rateLimitWindowMs = config.telemetry?.rateLimitWindowMs ?? 60_000;
+    const rateLimitMaxRequests = config.telemetry?.rateLimitMaxRequests ?? 120;
+    const ip = getClientIp(c.req.raw.headers);
+    const nowMs = Date.now();
+    const bucket = telemetryRate.get(ip) ?? { windowStart: nowMs, count: 0 };
+    if (nowMs - bucket.windowStart > rateLimitWindowMs) {
+      bucket.windowStart = nowMs;
+      bucket.count = 0;
+    }
+    bucket.count += 1;
+    telemetryRate.set(ip, bucket);
+    if (bucket.count > rateLimitMaxRequests) {
+      return c.json({ error: "Rate limit exceeded" }, 429);
+    }
+
+    const body = await c.req.json<{
+      events?: ClientEvent[];
+      event?: ClientEvent;
+      defaultTrustScore?: number;
+    }>();
+    const events = body.events ?? (body.event ? [body.event] : []);
+    if (!events.length) {
+      return c.json({ error: "Missing events payload" }, 400);
+    }
+    const maxEventsPerRequest = config.telemetry?.maxEventsPerRequest ?? 20;
+    if (events.length > maxEventsPerRequest) {
+      return c.json({ error: `Too many events; max is ${maxEventsPerRequest}` }, 400);
+    }
+
+    for (const event of events) {
+      if (!event.channel || !event.runtimeVersion || !event.platform || !event.type) {
+        return c.json({ error: "Each event requires channel, runtimeVersion, platform, and type" }, 400);
+      }
+    }
+    const validationError = validateClientEvents(
+      events,
+      nowMs,
+      config.telemetry?.maxTimestampSkewMs ?? 86_400_000
+    );
+    if (validationError) {
+      return c.json({ error: validationError }, 400);
+    }
+
+    const trusted = !!token;
+
+    await adapter.recordClientEvents(
+      events.map((event) => {
+        const withScore = {
+          ...event,
+          trustScore:
+            typeof event.trustScore === "number"
+              ? event.trustScore
+              : body.defaultTrustScore,
+        };
+        return {
+          ...withScore,
+          trusted,
+          trustWeight: getTrustWeight(withScore, trusted, config),
+          timestamp: event.timestamp ?? new Date().toISOString(),
+        };
+      })
+    );
+
+    const first = events[0];
+    emit(config, {
+      type: "client_events_recorded",
+      count: events.length,
+      channel: first.channel,
+      runtimeVersion: first.runtimeVersion,
+      platform: first.platform,
+    });
+
+    return c.json({ ok: true, count: events.length });
   });
 
   // ─── Admin: middleware ─────────────────────────────────────────────
@@ -582,10 +782,15 @@ export function createAirlock(config: AirlockConfig) {
     const body = await c.req.json<{
       events?: ClientEvent[];
       event?: ClientEvent;
+      defaultTrustScore?: number;
     }>();
     const events = body.events ?? (body.event ? [body.event] : []);
     if (!events.length) {
       return c.json({ error: "Missing events payload" }, 400);
+    }
+    const maxEventsPerRequest = config.telemetry?.maxEventsPerRequest ?? 20;
+    if (events.length > maxEventsPerRequest) {
+      return c.json({ error: `Too many events; max is ${maxEventsPerRequest}` }, 400);
     }
 
     for (const event of events) {
@@ -593,12 +798,31 @@ export function createAirlock(config: AirlockConfig) {
         return c.json({ error: "Each event requires channel, runtimeVersion, platform, and type" }, 400);
       }
     }
+    const validationError = validateClientEvents(
+      events,
+      Date.now(),
+      config.telemetry?.maxTimestampSkewMs ?? 86_400_000
+    );
+    if (validationError) {
+      return c.json({ error: validationError }, 400);
+    }
 
     await adapter.recordClientEvents(
-      events.map((event) => ({
-        ...event,
-        timestamp: event.timestamp ?? new Date().toISOString(),
-      }))
+      events.map((event) => {
+        const withScore = {
+          ...event,
+          trustScore:
+            typeof event.trustScore === "number"
+              ? event.trustScore
+              : body.defaultTrustScore,
+        };
+        return {
+          ...withScore,
+          trusted: true,
+          trustWeight: 1,
+          timestamp: event.timestamp ?? new Date().toISOString(),
+        };
+      })
     );
 
     const first = events[0];

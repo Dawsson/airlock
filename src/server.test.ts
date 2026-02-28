@@ -328,6 +328,115 @@ describe("airlock", () => {
     expect(events.some((e) => e.type === "update_auto_blocked")).toBe(true);
   });
 
+  test("does not auto-block from untrusted public telemetry by default", async () => {
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "fallback-update" },
+      })
+    );
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "latest-update" },
+      })
+    );
+    const res = await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        events: Array.from({ length: 25 }).map((_, index) => ({
+          type: index < 10 ? "launch" : "launch_failed",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "latest-update",
+        })),
+      }),
+    });
+    expect(res.status).toBe(400);
+    // send in valid-sized chunks
+    for (let i = 0; i < 25; i += 20) {
+      const chunk = Array.from({ length: Math.min(20, 25 - i) }).map((_, index) => ({
+        type: i + index < 10 ? "launch" : "launch_failed",
+        channel: "default",
+        runtimeVersion: "1.0.0",
+        platform: "ios",
+        updateId: "latest-update",
+      }));
+      const chunkRes = await app.request("/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: chunk }),
+      });
+      expect(chunkRes.status).toBe(200);
+    }
+
+    const manifestRes = await manifestRequest(app);
+    expect(manifestRes.status).toBe(200);
+    const manifest = extractManifestPart(await manifestRes.text());
+    expect(manifest.id).toBe("latest-update");
+  });
+
+  test("can auto-block from untrusted telemetry when explicitly enabled", async () => {
+    const adapter2 = new MemoryAdapter();
+    const airlock2 = createAirlock({
+      adapter: adapter2,
+      stability: {
+        useUntrustedTelemetry: true,
+        minLaunchesForBlocking: 20,
+        crashRateThreshold: 0.5,
+      },
+      telemetry: {
+        maxUntrustedWeight: 1,
+      },
+    });
+    const app2 = new Hono();
+    app2.route("/", airlock2.routes);
+
+    await adapter2.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "fallback-update" },
+      })
+    );
+    await adapter2.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "latest-update" },
+      })
+    );
+    for (let i = 0; i < 25; i += 20) {
+      const chunk = Array.from({ length: Math.min(20, 25 - i) }).map((_, index) => ({
+        type: i + index < 10 ? "launch" : "launch_failed",
+        channel: "default",
+        runtimeVersion: "1.0.0",
+        platform: "ios",
+        updateId: "latest-update",
+        trustScore: 1,
+      }));
+      const chunkRes = await app2.request("/events", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ events: chunk }),
+      });
+      expect(chunkRes.status).toBe(200);
+    }
+
+    const manifestRes = await manifestRequest(app2);
+    expect(manifestRes.status).toBe(200);
+    const manifest = extractManifestPart(await manifestRes.text());
+    expect(manifest.id).toBe("fallback-update");
+  });
+
   // ─── resolveUpdate hook ──────────────────────────────────────────
 
   test("resolveUpdate hook is called", async () => {
@@ -462,11 +571,151 @@ describe("airlock", () => {
     expect(healthRes.status).toBe(200);
     const healthBody = await healthRes.json() as {
       supported: boolean;
-      health: Array<{ updateId: string; totalLaunches: number; avgApplyMs: number | null }>;
+      health: Array<{
+        updateId: string;
+        totalLaunches: number;
+        trustedLaunches: number;
+        avgApplyMs: number | null;
+      }>;
     };
     expect(healthBody.supported).toBe(true);
     expect(healthBody.health.find((h) => h.updateId === "update-1")?.totalLaunches).toBe(1);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.trustedLaunches).toBe(1);
     expect(healthBody.health.find((h) => h.updateId === "update-1")?.avgApplyMs).toBe(650);
+  });
+
+  test("public events endpoint accepts unauthenticated telemetry as untrusted", async () => {
+    const res = await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: {
+          type: "launch",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "update-1",
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const healthRes = await app.request(
+      "/admin/health?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    const healthBody = await healthRes.json() as {
+      health: Array<{
+        updateId: string;
+        totalLaunches: number;
+        trustedLaunches: number;
+        weightedLaunches: number;
+      }>;
+    };
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.totalLaunches).toBe(1);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.trustedLaunches).toBe(0);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.weightedLaunches).toBe(0.25);
+  });
+
+  test("public events trust score is normalized and capped", async () => {
+    const res = await app.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: {
+          type: "launch_failed",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "update-1",
+          trustScore: 95,
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+
+    const healthRes = await app.request(
+      "/admin/health?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    const healthBody = await healthRes.json() as {
+      health: Array<{
+        updateId: string;
+        weightedLaunches: number;
+        weightedFailedLaunches: number;
+      }>;
+    };
+    // default public cap is 0.25 regardless of higher provided score.
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.weightedLaunches).toBe(0.25);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.weightedFailedLaunches).toBe(0.25);
+  });
+
+  test("public events endpoint enforces rate and batch limits", async () => {
+    const strictAirlock = createAirlock({
+      adapter: new MemoryAdapter(),
+      adminToken: "test-token",
+      telemetry: {
+        maxEventsPerRequest: 1,
+        rateLimitWindowMs: 60_000,
+        rateLimitMaxRequests: 1,
+      },
+    });
+    const strictApp = new Hono();
+    strictApp.route("/", strictAirlock.routes);
+
+    const tooManyEvents = await strictApp.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        events: [
+          {
+            type: "launch",
+            channel: "default",
+            runtimeVersion: "1.0.0",
+            platform: "ios",
+            updateId: "u1",
+          },
+          {
+            type: "launch",
+            channel: "default",
+            runtimeVersion: "1.0.0",
+            platform: "ios",
+            updateId: "u1",
+          },
+        ],
+      }),
+    });
+    expect(tooManyEvents.status).toBe(400);
+
+    const first = await strictApp.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "1.1.1.1" },
+      body: JSON.stringify({
+        event: {
+          type: "launch",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+        },
+      }),
+    });
+    expect(first.status).toBe(200);
+
+    const second = await strictApp.request("/events", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-real-ip": "1.1.1.1" },
+      body: JSON.stringify({
+        event: {
+          type: "launch",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+        },
+      }),
+    });
+    expect(second.status).toBe(429);
   });
 
   // ─── Admin: publish ──────────────────────────────────────────────

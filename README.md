@@ -60,6 +60,7 @@ const airlock = createAirlock({
     r2PublicUrl: env.R2_PUBLIC_URL,
   }),
   adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
+  clientEventToken: (env: Env) => env.AIRLOCK_CLIENT_EVENT_TOKEN,
 })
 
 // Returns a standard WinterCG fetch handler with basePath prefix stripping built in.
@@ -200,7 +201,7 @@ Override with env vars:
 - Admin API with bearer token auth (publish, promote, rollback, rollout)
 - Targeting controls: cohort, minimum bandwidth, and stage gating
 - Update metadata: kind (`feature|optional|hotfix|emergency`), stage, tags
-- Immediate-apply hint in manifest `extra.immediateApply`
+- Immediate-apply hint in manifest `extra.immediateApply` (`never|fast_connection|always`)
 - Telemetry ingestion endpoint for launch/apply/download events
 - Health stats endpoint (crash rate + timing aggregates)
 - Automatic unhealthy-update blocking based on crash-rate thresholds
@@ -289,19 +290,21 @@ createAirlock({
     autoBlockUnhealthy: true,
     minLaunchesForBlocking: 20,
     crashRateThreshold: 0.2,
+    useUntrustedTelemetry: false,
   },
 })
 ```
 
 If telemetry reports that an update exceeds the crash threshold after the minimum
 sample size, Airlock skips that update and serves the next eligible one.
+By default, only trusted telemetry is used for auto-block decisions.
 
 ## Adapters
 
 ### Built-in
 
-- **`@dawsson/airlock/adapters/cloudflare`** — KV for metadata, R2 for assets
-- **`@dawsson/airlock/adapters/memory`** — In-memory, for tests
+- `**@dawsson/airlock/adapters/cloudflare**` — KV for metadata, R2 for assets
+- `**@dawsson/airlock/adapters/memory**` — In-memory, for tests
 
 ### Custom
 
@@ -323,37 +326,55 @@ class PostgresAdapter implements StorageAdapter {
 }
 ```
 
+## Telemetry API
+
+Public client telemetry endpoint:
+
+- `POST /events` (no admin token required)
+- guarded by request size, batch size, timestamp skew, and per-IP rate limits
+- events received here are marked **untrusted** unless `clientEventToken` is configured
+
+Trusted telemetry endpoint:
+
+- `POST /admin/client-events` (admin token required)
+- events are always marked trusted for stability decisions
+
 ## Admin API
 
 All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is set.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/admin/publish` | Publish an update with manifest + assets |
-| `POST` | `/admin/promote` | Copy update from one channel to another |
-| `POST` | `/admin/rollout` | Set rollout percentage for an update |
-| `POST` | `/admin/rollback` | Revert to previous update |
-| `POST` | `/admin/client-events` | Record client launch/download/apply telemetry |
-| `GET` | `/admin/health` | Read per-update crash-rate and timing aggregates |
-| `GET` | `/admin/updates` | List update history for a channel/rv/platform |
-| `GET` | `/admin/status` | Overview of all deployed updates across all channels |
+
+| Method | Path                   | Description                                          |
+| ------ | ---------------------- | ---------------------------------------------------- |
+| `POST` | `/admin/publish`       | Publish an update with manifest + assets             |
+| `POST` | `/admin/promote`       | Copy update from one channel to another              |
+| `POST` | `/admin/rollout`       | Set rollout percentage for an update                 |
+| `POST` | `/admin/rollback`      | Revert to previous update                            |
+| `POST` | `/admin/client-events` | Record trusted client launch/download/apply telemetry |
+| `GET`  | `/admin/health`        | Read per-update crash-rate and timing aggregates     |
+| `GET`  | `/admin/updates`       | List update history for a channel/rv/platform        |
+| `GET`  | `/admin/status`        | Overview of all deployed updates across all channels |
+
 
 ## iOS Timing Baseline
 
 From the latest local run (`e2e/ios-ota-report.json`, iPhone 17 Pro simulator):
 
-| Step | Duration |
-|------|----------|
-| wait_for_server | 270 ms |
-| export_publish_v1 | 7.0 s |
-| build_release_v1 | 25.8 s |
-| first_launch | 8.4 s |
-| export_publish_v2 | 7.3 s |
-| second_launch | 8.4 s |
-| third_launch | 8.4 s |
-| **total** | **65.6 s** |
+
+| Step              | Duration   |
+| ----------------- | ---------- |
+| wait_for_server   | 270 ms     |
+| export_publish_v1 | 7.0 s      |
+| build_release_v1  | 25.8 s     |
+| first_launch      | 8.4 s      |
+| export_publish_v2 | 7.3 s      |
+| second_launch     | 8.4 s      |
+| third_launch      | 8.4 s      |
+| **total**         | **65.6 s** |
+
 
 Notes:
+
 - Build dominates runtime; OTA publish/fetch/apply loop is significantly faster than full rebuild.
 - Second launch was non-embedded (`isEmbeddedLaunch=false`), confirming OTA activation.
 
