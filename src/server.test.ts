@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach } from "bun:test";
 import { Hono } from "hono";
 import { createAirlock } from "./server";
 import { MemoryAdapter } from "./adapters/memory";
-import type { StoredUpdate, AirlockEvent } from "./types";
+import type { StoredUpdate, AirlockEvent, StorageAdapter, Platform, ClientEvent } from "./types";
 
 function makeUpdate(overrides?: Partial<StoredUpdate>): StoredUpdate {
   return {
@@ -745,6 +745,205 @@ describe("airlock", () => {
       }),
     });
     expect(second.status).toBe(429);
+  });
+
+  test("metrics endpoint returns aggregates from ingested telemetry", async () => {
+    const eventsPayload = {
+      events: [
+        {
+          type: "launch",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+          networkType: "wifi",
+          bandwidthKbps: 15000,
+          cohort: "A",
+          stage: "production",
+          appliedFromEmbedded: false,
+        },
+        {
+          type: "launch_failed",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+          networkType: "cellular",
+          bandwidthKbps: 300,
+          error: "boom",
+          cohort: "A",
+          stage: "production",
+        },
+        {
+          type: "update_downloaded",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+          durationMs: 1200,
+        },
+        {
+          type: "update_applied",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "u1",
+          durationMs: 400,
+        },
+      ],
+    };
+    const ingest = await adminRequest(app, "/client-events", eventsPayload);
+    expect(ingest.status).toBe(200);
+
+    const overviewRes = await app.request(
+      "/admin/metrics/overview?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(overviewRes.status).toBe(200);
+    const overviewBody = await overviewRes.json() as {
+      supported: boolean;
+      overview: { totalEvents: number; byType: Record<string, number> };
+    };
+    expect(overviewBody.supported).toBe(true);
+    expect(overviewBody.overview.totalEvents).toBe(4);
+    expect(overviewBody.overview.byType.launch).toBe(1);
+    expect(overviewBody.overview.byType.launch_failed).toBe(1);
+
+    const timingsRes = await app.request(
+      "/admin/metrics/timings?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(timingsRes.status).toBe(200);
+    const timingsBody = await timingsRes.json() as {
+      supported: boolean;
+      timings: { update_downloaded: { avgMs: number | null } };
+    };
+    expect(timingsBody.supported).toBe(true);
+    expect(timingsBody.timings.update_downloaded.avgMs).toBe(1200);
+
+    const segmentsRes = await app.request(
+      "/admin/metrics/segments?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(segmentsRes.status).toBe(200);
+    const segmentsBody = await segmentsRes.json() as {
+      supported: boolean;
+      segments: {
+        bandwidthBuckets: Array<{ key: string; launches: number }>;
+      };
+    };
+    expect(segmentsBody.supported).toBe(true);
+    expect(
+      segmentsBody.segments.bandwidthBuckets.some((entry) => entry.key === "very_high")
+    ).toBe(true);
+    expect(
+      segmentsBody.segments.bandwidthBuckets.some((entry) => entry.key === "low")
+    ).toBe(true);
+  });
+
+  test("metrics query validation enforces required params and window bounds", async () => {
+    const missing = await app.request("/admin/metrics/overview?platform=ios", {
+      headers: { Authorization: "Bearer test-token" },
+    });
+    expect(missing.status).toBe(400);
+
+    const largeRange = await app.request(
+      "/admin/metrics/overview?runtimeVersion=1.0.0&platform=ios&from=2020-01-01T00:00:00.000Z&to=2026-01-01T00:00:00.000Z",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(largeRange.status).toBe(400);
+  });
+
+  test("metricsAuth can override admin bearer for /admin/metrics routes", async () => {
+    const adapter2 = new MemoryAdapter();
+    await adapter2.recordClientEvents?.([
+      {
+        type: "launch",
+        channel: "default",
+        runtimeVersion: "1.0.0",
+        platform: "ios",
+        updateId: "u1",
+      },
+    ]);
+    const airlock2 = createAirlock({
+      adapter: adapter2,
+      adminToken: "test-token",
+      metricsAuth: (req) => req.headers.get("x-metrics-key") === "allow",
+    });
+    const app2 = new Hono();
+    app2.route("/", airlock2.routes);
+
+    const denied = await app2.request(
+      "/admin/metrics/overview?runtimeVersion=1.0.0&platform=ios"
+    );
+    expect(denied.status).toBe(401);
+
+    const allowed = await app2.request(
+      "/admin/metrics/overview?runtimeVersion=1.0.0&platform=ios",
+      { headers: { "x-metrics-key": "allow" } }
+    );
+    expect(allowed.status).toBe(200);
+
+    const nonMetricsDenied = await app2.request(
+      "/admin/updates?runtimeVersion=1.0.0&platform=ios",
+      { headers: { "x-metrics-key": "allow" } }
+    );
+    expect(nonMetricsDenied.status).toBe(401);
+  });
+
+  test("metrics endpoints return supported=false when adapter has no metrics methods", async () => {
+    class NoMetricsAdapter implements StorageAdapter {
+      private base = new MemoryAdapter();
+      getLatestUpdate(channel: string, runtimeVersion: string, platform: Platform) {
+        return this.base.getLatestUpdate(channel, runtimeVersion, platform);
+      }
+      publishUpdate(channel: string, runtimeVersion: string, platform: Platform, update: StoredUpdate) {
+        return this.base.publishUpdate(channel, runtimeVersion, platform, update);
+      }
+      setRollout(channel: string, runtimeVersion: string, platform: Platform, updateId: string, percentage: number) {
+        return this.base.setRollout(channel, runtimeVersion, platform, updateId, percentage);
+      }
+      promoteUpdate(fromChannel: string, toChannel: string, runtimeVersion: string, platform: Platform) {
+        return this.base.promoteUpdate(fromChannel, toChannel, runtimeVersion, platform);
+      }
+      rollbackUpdate(channel: string, runtimeVersion: string, platform: Platform) {
+        return this.base.rollbackUpdate(channel, runtimeVersion, platform);
+      }
+      getUpdateHistory(channel: string, runtimeVersion: string, platform: Platform, limit?: number) {
+        return this.base.getUpdateHistory(channel, runtimeVersion, platform, limit);
+      }
+      listUpdates() {
+        return this.base.listUpdates();
+      }
+      getAssetUrl(hash: string) {
+        return this.base.getAssetUrl(hash);
+      }
+      storeAsset(hash: string, data: Uint8Array | ReadableStream | ArrayBuffer, contentType: string) {
+        return this.base.storeAsset(hash, data, contentType);
+      }
+      recordClientEvents(events: ClientEvent[]) {
+        return this.base.recordClientEvents(events);
+      }
+      getUpdateHealth(channel: string, runtimeVersion: string, platform: Platform, limit?: number) {
+        return this.base.getUpdateHealth(channel, runtimeVersion, platform, limit);
+      }
+    }
+
+    const airlock2 = createAirlock({
+      adapter: new NoMetricsAdapter(),
+      adminToken: "test-token",
+    });
+    const app2 = new Hono();
+    app2.route("/", airlock2.routes);
+
+    const res = await app2.request(
+      "/admin/metrics/overview?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json() as { supported: boolean; overview: unknown };
+    expect(body.supported).toBe(false);
+    expect(body.overview).toBeNull();
   });
 
   // ─── Admin: publish ──────────────────────────────────────────────

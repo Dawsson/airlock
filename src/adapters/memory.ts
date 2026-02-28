@@ -1,4 +1,11 @@
 import type {
+  ClientEventType,
+  MetricsAdoption,
+  MetricsFailures,
+  MetricsOverview,
+  MetricsQuery,
+  MetricsSegments,
+  MetricsTimings,
   ClientEvent,
   Platform,
   StorageAdapter,
@@ -34,6 +41,58 @@ export class MemoryAdapter implements StorageAdapter {
       }
     >
   >();
+  private metricsEvents: ClientEvent[] = [];
+
+  private filterEvents(query: MetricsQuery): ClientEvent[] {
+    const fromMs = Date.parse(query.from);
+    const toMs = Date.parse(query.to);
+    return this.metricsEvents.filter((event) => {
+      if (event.channel !== query.channel) return false;
+      if (event.runtimeVersion !== query.runtimeVersion) return false;
+      if (event.platform !== query.platform) return false;
+      const ts = Date.parse(event.timestamp ?? "");
+      return Number.isFinite(ts) && ts >= fromMs && ts <= toMs;
+    });
+  }
+
+  private static summarizeDurations(events: ClientEvent[]) {
+    const values = events
+      .map((event) => event.durationMs)
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+      .sort((a, b) => a - b);
+    if (!values.length) {
+      return {
+        count: 0,
+        avgMs: null,
+        minMs: null,
+        maxMs: null,
+        p50Ms: null,
+        p95Ms: null,
+      };
+    }
+    const at = (ratio: number) => values[Math.min(values.length - 1, Math.floor(values.length * ratio))];
+    const total = values.reduce((sum, value) => sum + value, 0);
+    return {
+      count: values.length,
+      avgMs: Math.round(total / values.length),
+      minMs: values[0],
+      maxMs: values[values.length - 1],
+      p50Ms: at(0.5),
+      p95Ms: at(0.95),
+    };
+  }
+
+  private static countByType(events: ClientEvent[]): Record<ClientEventType, number> {
+    const out: Record<ClientEventType, number> = {
+      launch: 0,
+      launch_failed: 0,
+      update_check: 0,
+      update_downloaded: 0,
+      update_applied: 0,
+    };
+    for (const event of events) out[event.type] += 1;
+    return out;
+  }
 
   async getLatestUpdate(
     channel: string,
@@ -146,6 +205,7 @@ export class MemoryAdapter implements StorageAdapter {
   }
 
   async recordClientEvents(events: ClientEvent[]): Promise<void> {
+    this.metricsEvents.push(...events);
     for (const event of events) {
       if (!event.updateId) continue;
       const k = key(event.channel, event.runtimeVersion, event.platform);
@@ -196,6 +256,11 @@ export class MemoryAdapter implements StorageAdapter {
     }
   }
 
+  async recordMetricsSnapshots(events: ClientEvent[]): Promise<void> {
+    // Memory adapter already snapshots metrics in recordClientEvents.
+    void events;
+  }
+
   async getUpdateHealth(
     channel: string,
     runtimeVersion: string,
@@ -237,5 +302,153 @@ export class MemoryAdapter implements StorageAdapter {
     return results
       .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
       .slice(0, limit);
+  }
+
+  async getMetricsOverview(query: MetricsQuery): Promise<MetricsOverview> {
+    const events = this.filterEvents(query);
+    const launches = events.filter((event) => event.type === "launch").length;
+    const failedLaunches = events.filter((event) => event.type === "launch_failed").length;
+    const trustedLaunches = events.filter(
+      (event) => (event.type === "launch" || event.type === "launch_failed") && !!event.trusted
+    ).length;
+    const trustedFailedLaunches = events.filter(
+      (event) => event.type === "launch_failed" && !!event.trusted
+    ).length;
+    const weightedLaunches = events
+      .filter((event) => event.type === "launch" || event.type === "launch_failed")
+      .reduce((sum, event) => sum + (event.trustWeight ?? (event.trusted ? 1 : 0.25)), 0);
+    const weightedFailedLaunches = events
+      .filter((event) => event.type === "launch_failed")
+      .reduce((sum, event) => sum + (event.trustWeight ?? (event.trusted ? 1 : 0.25)), 0);
+    return {
+      totalEvents: events.length,
+      uniqueUpdates: new Set(events.map((event) => event.updateId).filter(Boolean)).size,
+      blockedUpdates: 0,
+      launches,
+      failedLaunches,
+      trustedLaunches,
+      trustedFailedLaunches,
+      weightedLaunches: Number(weightedLaunches.toFixed(3)),
+      weightedFailedLaunches: Number(weightedFailedLaunches.toFixed(3)),
+      crashRate: launches + failedLaunches > 0 ? failedLaunches / (launches + failedLaunches) : 0,
+      trustedCrashRate:
+        trustedLaunches > 0 ? trustedFailedLaunches / trustedLaunches : 0,
+      weightedCrashRate:
+        weightedLaunches > 0 ? weightedFailedLaunches / weightedLaunches : 0,
+      byType: MemoryAdapter.countByType(events),
+    };
+  }
+
+  async getMetricsTimings(query: MetricsQuery): Promise<MetricsTimings> {
+    const events = this.filterEvents(query);
+    return {
+      update_check: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_check")),
+      update_downloaded: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_downloaded")),
+      update_applied: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_applied")),
+    };
+  }
+
+  async getMetricsAdoption(query: MetricsQuery): Promise<MetricsAdoption> {
+    const events = this.filterEvents(query).filter((event) => !!event.updateId);
+    const byUpdate = new Map<
+      string,
+      { launches: number; failedLaunches: number; embeddedLaunches: number; otaLaunches: number; lastSeenAt: string | null }
+    >();
+    for (const event of events) {
+      const updateId = event.updateId!;
+      const current = byUpdate.get(updateId) ?? {
+        launches: 0,
+        failedLaunches: 0,
+        embeddedLaunches: 0,
+        otaLaunches: 0,
+        lastSeenAt: null,
+      };
+      if (event.type === "launch") {
+        current.launches += 1;
+        if (event.appliedFromEmbedded) current.embeddedLaunches += 1;
+        else current.otaLaunches += 1;
+      }
+      if (event.type === "launch_failed") current.failedLaunches += 1;
+      if (event.timestamp && (!current.lastSeenAt || event.timestamp > current.lastSeenAt)) {
+        current.lastSeenAt = event.timestamp;
+      }
+      byUpdate.set(updateId, current);
+    }
+    return {
+      entries: Array.from(byUpdate.entries())
+        .map(([updateId, entry]) => ({ updateId, ...entry }))
+        .sort((a, b) => (b.lastSeenAt ?? "").localeCompare(a.lastSeenAt ?? ""))
+        .slice(0, query.limit),
+    };
+  }
+
+  async getMetricsFailures(query: MetricsQuery): Promise<MetricsFailures> {
+    const events = this.filterEvents(query).filter((event) => !!event.updateId);
+    const launchesByUpdate = new Map<string, number>();
+    const failuresByUpdate = new Map<string, { failures: number; byError: Record<string, number> }>();
+
+    for (const event of events) {
+      const updateId = event.updateId!;
+      if (event.type === "launch" || event.type === "launch_failed") {
+        launchesByUpdate.set(updateId, (launchesByUpdate.get(updateId) ?? 0) + 1);
+      }
+      if (event.type === "launch_failed") {
+        const entry = failuresByUpdate.get(updateId) ?? { failures: 0, byError: {} };
+        entry.failures += 1;
+        const err = event.error ?? "unknown";
+        entry.byError[err] = (entry.byError[err] ?? 0) + 1;
+        failuresByUpdate.set(updateId, entry);
+      }
+    }
+
+    return {
+      entries: Array.from(failuresByUpdate.entries())
+        .map(([updateId, failure]) => {
+          const launches = launchesByUpdate.get(updateId) ?? 0;
+          return {
+            updateId,
+            failures: failure.failures,
+            launches,
+            crashRate: launches > 0 ? failure.failures / launches : 0,
+            byError: failure.byError,
+          };
+        })
+        .sort((a, b) => b.failures - a.failures)
+        .slice(0, query.limit),
+    };
+  }
+
+  async getMetricsSegments(query: MetricsQuery): Promise<MetricsSegments> {
+    const events = this.filterEvents(query).filter(
+      (event) => event.type === "launch" || event.type === "launch_failed"
+    );
+
+    const build = (keyFor: (event: ClientEvent) => string) => {
+      const map = new Map<string, { launches: number; failedLaunches: number }>();
+      for (const event of events) {
+        const key = keyFor(event);
+        const entry = map.get(key) ?? { launches: 0, failedLaunches: 0 };
+        entry.launches += 1;
+        if (event.type === "launch_failed") entry.failedLaunches += 1;
+        map.set(key, entry);
+      }
+      return Array.from(map.entries())
+        .map(([key, value]) => ({
+          key,
+          launches: value.launches,
+          failedLaunches: value.failedLaunches,
+          crashRate: value.launches > 0 ? value.failedLaunches / value.launches : 0,
+        }))
+        .sort((a, b) => b.launches - a.launches)
+        .slice(0, query.limit);
+    };
+
+    return {
+      cohorts: build((event) => event.cohort ?? "unassigned"),
+      stages: build((event) => event.stage ?? "unknown"),
+      networkTypes: build((event) => event.networkType ?? "unknown"),
+      bandwidthBuckets: build((event) => event.bandwidthBucket ?? "unknown"),
+      trustLevels: build((event) => (event.trusted ? "trusted" : "untrusted")),
+    };
   }
 }

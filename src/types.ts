@@ -61,8 +61,10 @@ export type ClientEvent = {
   updateId?: string;
   deviceId?: string;
   stage?: UpdateStage;
+  cohort?: string;
   networkType?: "wifi" | "cellular" | "unknown";
   bandwidthKbps?: number;
+  bandwidthBucket?: BandwidthBucket;
   durationMs?: number;
   appliedFromEmbedded?: boolean;
   error?: string;
@@ -76,6 +78,105 @@ export type ClientEvent = {
   trustScore?: number;
   /** Normalized trust weight (0..1) computed by the server. */
   trustWeight?: number;
+};
+
+export type BandwidthBucket =
+  | "unknown"
+  | "low"
+  | "medium"
+  | "high"
+  | "very_high";
+
+export type MetricsQuery = {
+  channel: string;
+  runtimeVersion: string;
+  platform: Platform;
+  from: string;
+  to: string;
+  limit: number;
+};
+
+export type MetricsOverview = {
+  totalEvents: number;
+  uniqueUpdates: number;
+  blockedUpdates: number;
+  launches: number;
+  failedLaunches: number;
+  trustedLaunches: number;
+  trustedFailedLaunches: number;
+  weightedLaunches: number;
+  weightedFailedLaunches: number;
+  crashRate: number;
+  trustedCrashRate: number;
+  weightedCrashRate: number;
+  byType: Record<ClientEventType, number>;
+};
+
+export type MetricsTimings = {
+  update_check: {
+    count: number;
+    avgMs: number | null;
+    minMs: number | null;
+    maxMs: number | null;
+    p50Ms: number | null;
+    p95Ms: number | null;
+  };
+  update_downloaded: {
+    count: number;
+    avgMs: number | null;
+    minMs: number | null;
+    maxMs: number | null;
+    p50Ms: number | null;
+    p95Ms: number | null;
+  };
+  update_applied: {
+    count: number;
+    avgMs: number | null;
+    minMs: number | null;
+    maxMs: number | null;
+    p50Ms: number | null;
+    p95Ms: number | null;
+  };
+};
+
+export type MetricsAdoptionEntry = {
+  updateId: string;
+  launches: number;
+  failedLaunches: number;
+  embeddedLaunches: number;
+  otaLaunches: number;
+  lastSeenAt: string | null;
+};
+
+export type MetricsAdoption = {
+  entries: MetricsAdoptionEntry[];
+};
+
+export type MetricsFailureEntry = {
+  updateId: string;
+  failures: number;
+  launches: number;
+  crashRate: number;
+  byError: Record<string, number>;
+};
+
+export type MetricsFailures = {
+  entries: MetricsFailureEntry[];
+};
+
+export type MetricsSegmentEntry = {
+  key: string;
+  launches: number;
+  failedLaunches: number;
+  crashRate: number;
+};
+
+export type MetricsSegments = {
+  cohorts: MetricsSegmentEntry[];
+  stages: MetricsSegmentEntry[];
+  networkTypes: MetricsSegmentEntry[];
+  bandwidthBuckets: MetricsSegmentEntry[];
+  trustLevels: MetricsSegmentEntry[];
 };
 
 export type UpdateHealth = {
@@ -125,6 +226,12 @@ export type AirlockEvent =
       channel: string;
       runtimeVersion: string;
       platform: Platform;
+    }
+  | {
+      type: "telemetry_export_failed";
+      count: number;
+      trusted: boolean;
+      reason: string;
     }
   | { type: "rollout_changed"; updateId: string; percentage: number }
   | {
@@ -212,6 +319,7 @@ export interface StorageAdapter {
   ): Promise<string>;
 
   recordClientEvents?(events: ClientEvent[]): Promise<void>;
+  recordMetricsSnapshots?(events: ClientEvent[]): Promise<void>;
 
   getUpdateHealth?(
     channel: string,
@@ -219,6 +327,12 @@ export interface StorageAdapter {
     platform: Platform,
     limit?: number
   ): Promise<UpdateHealth[]>;
+
+  getMetricsOverview?(query: MetricsQuery): Promise<MetricsOverview>;
+  getMetricsTimings?(query: MetricsQuery): Promise<MetricsTimings>;
+  getMetricsAdoption?(query: MetricsQuery): Promise<MetricsAdoption>;
+  getMetricsFailures?(query: MetricsQuery): Promise<MetricsFailures>;
+  getMetricsSegments?(query: MetricsQuery): Promise<MetricsSegments>;
 }
 
 /** Configuration for createAirlock() */
@@ -250,6 +364,12 @@ export type AirlockConfig = {
     context: UpdateContext
   ) => StoredUpdate | null | Promise<StoredUpdate | null>;
   onEvent?: (event: AirlockEvent) => void | Promise<void>;
+  onTelemetryBatch?: (
+    events: ClientEvent[],
+    context: { trusted: boolean; ip: string | null }
+  ) => void | Promise<void>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  metricsAuth?: (req: Request, env: any) => boolean | Promise<boolean>;
   stability?: {
     /** Auto-block unhealthy updates from being served (default: true). */
     autoBlockUnhealthy?: boolean;

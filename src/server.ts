@@ -2,7 +2,10 @@ import { Hono } from "hono";
 import type {
   AirlockConfig,
   AirlockEvent,
+  BandwidthBucket,
   ClientEvent,
+  ClientEventType,
+  MetricsQuery,
   Platform,
   StorageAdapter,
   StoredUpdate,
@@ -97,6 +100,16 @@ function parseNumber(value: string | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toBandwidthBucket(value: number | null | undefined): BandwidthBucket {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return "unknown";
+  }
+  if (value < 500) return "low";
+  if (value < 2_000) return "medium";
+  if (value < 10_000) return "high";
+  return "very_high";
+}
+
 function parseExpoExtraParams(header: string | undefined): Record<string, string> {
   if (!header) return {};
   const out: Record<string, string> = {};
@@ -119,12 +132,60 @@ function getClientIp(headers: Headers): string {
   return "unknown";
 }
 
+function parseMetricsQuery(
+  req: Request,
+  defaults?: Partial<Pick<MetricsQuery, "channel" | "limit">>
+): { ok: true; query: MetricsQuery } | { ok: false; error: string } {
+  const url = new URL(req.url);
+  const channel = url.searchParams.get("channel") ?? defaults?.channel ?? "default";
+  const runtimeVersion = url.searchParams.get("runtimeVersion");
+  const platform = url.searchParams.get("platform") as Platform | null;
+
+  if (!runtimeVersion || runtimeVersion.length > 100) {
+    return { ok: false, error: "Missing or invalid runtimeVersion query param" };
+  }
+  if (platform !== "ios" && platform !== "android") {
+    return { ok: false, error: "Missing or invalid platform query param" };
+  }
+
+  const now = Date.now();
+  const maxWindowMs = 30 * 24 * 60 * 60 * 1000;
+  const toRaw = url.searchParams.get("to");
+  const fromRaw = url.searchParams.get("from");
+  const to = toRaw ? Date.parse(toRaw) : now;
+  const from = fromRaw ? Date.parse(fromRaw) : to - 24 * 60 * 60 * 1000;
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) {
+    return { ok: false, error: "Invalid from/to query params" };
+  }
+  if (to - from > maxWindowMs) {
+    return { ok: false, error: "Query window too large; max is 30 days" };
+  }
+
+  const rawLimit = Number(url.searchParams.get("limit") ?? defaults?.limit ?? 50);
+  if (!Number.isInteger(rawLimit) || rawLimit < 1 || rawLimit > 500) {
+    return { ok: false, error: "Invalid limit query param; must be 1..500" };
+  }
+
+  return {
+    ok: true,
+    query: {
+      channel,
+      runtimeVersion,
+      platform,
+      from: new Date(from).toISOString(),
+      to: new Date(to).toISOString(),
+      limit: rawLimit,
+    },
+  };
+}
+
 function validateClientEvents(events: ClientEvent[], now = Date.now(), maxTimestampSkewMs = 86_400_000): string | null {
   for (const event of events) {
     if (!event.channel || event.channel.length > 100) return "Invalid channel";
     if (!event.runtimeVersion || event.runtimeVersion.length > 100) return "Invalid runtimeVersion";
     if (event.updateId && event.updateId.length > 128) return "Invalid updateId";
     if (event.deviceId && event.deviceId.length > 256) return "Invalid deviceId";
+    if (event.cohort && event.cohort.length > 100) return "Invalid cohort";
     if (event.error && event.error.length > 1024) return "Invalid error";
     if (typeof event.trustScore === "number" && !Number.isFinite(event.trustScore)) {
       return "Invalid trustScore";
@@ -168,6 +229,33 @@ function getTrustWeight(
     : defaultNormalizeTrustScore(raw);
   const safe = Math.max(0, Math.min(1, normalized));
   return Math.min(maxUntrustedWeight, safe);
+}
+
+function normalizeClientEvents(
+  events: ClientEvent[],
+  trusted: boolean,
+  config: AirlockConfig,
+  defaultTrustScore?: number
+): ClientEvent[] {
+  return events.map((event) => {
+    const withScore = {
+      ...event,
+      trustScore:
+        typeof event.trustScore === "number"
+          ? event.trustScore
+          : defaultTrustScore,
+    };
+    return {
+      ...withScore,
+      trusted,
+      trustWeight: getTrustWeight(withScore, trusted, config),
+      stage: withScore.stage,
+      cohort: withScore.cohort,
+      bandwidthBucket: toBandwidthBucket(withScore.bandwidthKbps),
+      networkType: withScore.networkType ?? "unknown",
+      timestamp: event.timestamp ?? new Date().toISOString(),
+    };
+  });
 }
 
 function matchesTargeting(update: StoredUpdate, ctx: UpdateContext): boolean {
@@ -514,24 +602,32 @@ export function createAirlock(config: AirlockConfig) {
     }
 
     const trusted = !!token;
-
-    await adapter.recordClientEvents(
-      events.map((event) => {
-        const withScore = {
-          ...event,
-          trustScore:
-            typeof event.trustScore === "number"
-              ? event.trustScore
-              : body.defaultTrustScore,
-        };
-        return {
-          ...withScore,
-          trusted,
-          trustWeight: getTrustWeight(withScore, trusted, config),
-          timestamp: event.timestamp ?? new Date().toISOString(),
-        };
-      })
+    const normalizedEvents = normalizeClientEvents(
+      events,
+      trusted,
+      config,
+      body.defaultTrustScore
     );
+
+    await adapter.recordClientEvents(normalizedEvents);
+    if (adapter.recordMetricsSnapshots) {
+      await adapter.recordMetricsSnapshots(normalizedEvents);
+    }
+    if (config.onTelemetryBatch) {
+      Promise.resolve(
+        config.onTelemetryBatch(normalizedEvents, {
+          trusted,
+          ip: ip === "unknown" ? null : ip,
+        })
+      ).catch((error) => {
+        emit(config, {
+          type: "telemetry_export_failed",
+          count: normalizedEvents.length,
+          trusted,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
 
     const first = events[0];
     emit(config, {
@@ -550,6 +646,17 @@ export function createAirlock(config: AirlockConfig) {
   const admin = new Hono();
 
   admin.use("*", async (c, next) => {
+    const isMetricsPath =
+      c.req.path === "/metrics" ||
+      c.req.path.startsWith("/metrics/") ||
+      c.req.path.includes("/admin/metrics");
+    if (isMetricsPath && config.metricsAuth) {
+      const allowed = await config.metricsAuth(c.req.raw, c.env);
+      if (!allowed) return c.json({ error: "Unauthorized" }, 401);
+      await next();
+      return;
+    }
+
     const token = resolveAdminToken(config, c.env);
     if (!requireAuth(token, c.req.header("authorization"))) {
       return c.json({ error: "Unauthorized" }, 401);
@@ -813,23 +920,33 @@ export function createAirlock(config: AirlockConfig) {
       return c.json({ error: validationError }, 400);
     }
 
-    await adapter.recordClientEvents(
-      events.map((event) => {
-        const withScore = {
-          ...event,
-          trustScore:
-            typeof event.trustScore === "number"
-              ? event.trustScore
-              : body.defaultTrustScore,
-        };
-        return {
-          ...withScore,
+    const normalizedEvents = normalizeClientEvents(
+      events,
+      true,
+      config,
+      body.defaultTrustScore
+    ).map((event) => ({ ...event, trustWeight: 1, trusted: true }));
+
+    await adapter.recordClientEvents(normalizedEvents);
+    if (adapter.recordMetricsSnapshots) {
+      await adapter.recordMetricsSnapshots(normalizedEvents);
+    }
+    if (config.onTelemetryBatch) {
+      const ip = getClientIp(c.req.raw.headers);
+      Promise.resolve(
+        config.onTelemetryBatch(normalizedEvents, {
           trusted: true,
-          trustWeight: 1,
-          timestamp: event.timestamp ?? new Date().toISOString(),
-        };
-      })
-    );
+          ip: ip === "unknown" ? null : ip,
+        })
+      ).catch((error) => {
+        emit(config, {
+          type: "telemetry_export_failed",
+          count: normalizedEvents.length,
+          trusted: true,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
 
     const first = events[0];
     emit(config, {
@@ -868,6 +985,70 @@ export function createAirlock(config: AirlockConfig) {
       limit
     );
     return c.json({ supported: true, health });
+  });
+
+  admin.get("/metrics/overview", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.getMetricsOverview) {
+      return c.json({ supported: false, overview: null });
+    }
+    const parsed = parseMetricsQuery(c.req.raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const overview = await adapter.getMetricsOverview(parsed.query);
+    return c.json({ supported: true, overview });
+  });
+
+  admin.get("/metrics/timings", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.getMetricsTimings) {
+      return c.json({ supported: false, timings: null });
+    }
+    const parsed = parseMetricsQuery(c.req.raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const timings = await adapter.getMetricsTimings(parsed.query);
+    return c.json({ supported: true, timings });
+  });
+
+  admin.get("/metrics/adoption", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.getMetricsAdoption) {
+      return c.json({ supported: false, adoption: { entries: [] } });
+    }
+    const parsed = parseMetricsQuery(c.req.raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const adoption = await adapter.getMetricsAdoption(parsed.query);
+    return c.json({ supported: true, adoption });
+  });
+
+  admin.get("/metrics/failures", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.getMetricsFailures) {
+      return c.json({ supported: false, failures: { entries: [] } });
+    }
+    const parsed = parseMetricsQuery(c.req.raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const failures = await adapter.getMetricsFailures(parsed.query);
+    return c.json({ supported: true, failures });
+  });
+
+  admin.get("/metrics/segments", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.getMetricsSegments) {
+      return c.json({
+        supported: false,
+        segments: {
+          cohorts: [],
+          stages: [],
+          networkTypes: [],
+          bandwidthBuckets: [],
+          trustLevels: [],
+        },
+      });
+    }
+    const parsed = parseMetricsQuery(c.req.raw);
+    if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    const segments = await adapter.getMetricsSegments(parsed.query);
+    return c.json({ supported: true, segments });
   });
 
   app.route("/admin", admin);
