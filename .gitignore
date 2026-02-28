@@ -1,3 +1,6 @@
 node_modules/
 *.tgz
 .DS_Store
+e2e/expo-ota-fixture/.airlock-builds/
+e2e/expo-ota-fixture/dist-*/
+e2e/ios-ota-report.json

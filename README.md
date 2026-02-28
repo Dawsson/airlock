@@ -47,38 +47,56 @@ npx skills add dawsson/airlock
 ## Quick Start
 
 ```ts
-import { createAirlock } from "@dawsson/airlock"
-import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare"
+import { createAirlock } from "@dawsson/airlock";
+import { CloudflareAdapter } from "@dawsson/airlock/adapters/cloudflare";
 
 // Adapter and token factories are called per-request with the runtime env —
 // the correct pattern for Cloudflare Workers where bindings aren't available at module init.
 // CloudflareAdapter.forEnv() falls back to MemoryAdapter in local dev (no crash, just a log).
 const airlock = createAirlock({
-  adapter: (env: Env) => CloudflareAdapter.forEnv({
-    kv: env.OTA_KV,
-    r2: env.OTA_R2,
-    r2PublicUrl: env.R2_PUBLIC_URL,
-  }),
+  adapter: (env: Env) =>
+    CloudflareAdapter.forEnv({
+      kv: env.OTA_KV,
+      r2: env.OTA_R2,
+      r2PublicUrl: env.R2_PUBLIC_URL,
+    }),
   adminToken: (env: Env) => env.AIRLOCK_ADMIN_TOKEN,
-  clientEventToken: (env: Env) => env.AIRLOCK_CLIENT_EVENT_TOKEN,
+  // Optional: only set if you want to require a bearer token on POST /events.
+  // clientEventToken: (env: Env) => env.AIRLOCK_CLIENT_EVENT_TOKEN,
   metricsAuth: (req) => req.headers.get("x-internal-dashboard-key") === "allow",
-})
+});
 
 // Returns a standard WinterCG fetch handler with basePath prefix stripping built in.
-const handler = airlock.mount("/ota")
+const handler = airlock.mount("/ota");
 
-export default { fetch: handler }
+export default { fetch: handler };
 ```
 
 Or mount on an existing Hono app:
 
 ```ts
-import { Hono } from "hono"
-const app = new Hono<{ Bindings: Env }>()
-app.all("/ota/*", (c) => handler(c.req.raw, c.env))
+import { Hono } from "hono";
+const app = new Hono<{ Bindings: Env }>();
+app.all("/ota/*", (c) => handler(c.req.raw, c.env));
 ```
 
 Point your Expo app at `https://your-api.com/ota/manifest` and updates just work.
+
+## Local Persistent Adapter
+
+For local/dev workflows where state should survive restarts, use the file-backed adapter:
+
+```ts
+import { createAirlock } from "@dawsson/airlock";
+import { FileAdapter } from "@dawsson/airlock/adapters/file";
+
+const airlock = createAirlock({
+  adapter: new FileAdapter({ filePath: ".airlock/state.json" }),
+  adminToken: process.env.AIRLOCK_ADMIN_TOKEN,
+});
+```
+
+This persists updates, assets, health, and metrics snapshots to JSON on disk.
 
 ## Expo App Configuration
 
@@ -153,6 +171,8 @@ The fixture app writes launch/update diagnostics to:
 
 The e2e script reads this file to assert OTA behavior.
 It also writes a timing report to `e2e/ios-ota-report.json`.
+Temporary Expo export artifacts are written to
+`e2e/expo-ota-fixture/.airlock-builds/` (gitignored).
 
 ### Advanced production feature checks
 
@@ -188,6 +208,7 @@ Override with env vars:
 - `AIRLOCK_E2E_SIMULATOR`
 - `AIRLOCK_E2E_BUNDLE_ID`
 - `AIRLOCK_E2E_RUNTIME`
+- `AIRLOCK_E2E_STATE_FILE` (optional JSON persistence file path)
 
 ### Troubleshooting
 
@@ -227,11 +248,11 @@ createAirlock({
   adapter,
   resolveUpdate(update, context) {
     // context has: channel, runtimeVersion, platform, headers, currentUpdateId
-    const userId = context.headers["x-user-id"]
-    if (!isBetaUser(userId)) return null
-    return update
+    const userId = context.headers["x-user-id"];
+    if (!isBetaUser(userId)) return null;
+    return update;
   },
-})
+});
 ```
 
 ### onEvent
@@ -244,9 +265,9 @@ createAirlock({
   onEvent(event) {
     // event.type: manifest_request | asset_request | update_published
     //             | rollout_changed | update_promoted | update_rolled_back
-    console.log(event)
+    console.log(event);
   },
-})
+});
 ```
 
 ## Code Signing
@@ -261,13 +282,13 @@ airlock keygen
 Configure the server:
 
 ```ts
-import { createAirlock, importSigningKey } from "@dawsson/airlock"
+import { createAirlock, importSigningKey } from "@dawsson/airlock";
 
 createAirlock({
   adapter,
   signingKey: await importSigningKey(env.AIRLOCK_SIGNING_KEY),
   signingKeyId: "main",
-})
+});
 ```
 
 Add the public key to your Expo app's `app.json`:
@@ -296,10 +317,10 @@ createAirlock({
     // context.trusted -> true for /admin/client-events, false for public /events
     // context.ip -> client IP when available
     // Fire your own async write path here
-    void events
-    void context
+    void events;
+    void context;
   },
-})
+});
 ```
 
 If this hook throws, Airlock swallows the error and emits
@@ -318,7 +339,7 @@ createAirlock({
     crashRateThreshold: 0.2,
     useUntrustedTelemetry: false,
   },
-})
+});
 ```
 
 If telemetry reports that an update exceeds the crash threshold after the minimum
@@ -337,18 +358,36 @@ By default, only trusted telemetry is used for auto-block decisions.
 Implement `StorageAdapter` for any backend (Postgres, S3, Upstash, etc.):
 
 ```ts
-import type { StorageAdapter, StoredUpdate, Platform } from "@dawsson/airlock"
+import type { StorageAdapter, StoredUpdate, Platform } from "@dawsson/airlock";
 
 class PostgresAdapter implements StorageAdapter {
-  async getLatestUpdate(channel, runtimeVersion, platform) { /* ... */ }
-  async publishUpdate(channel, runtimeVersion, platform, update) { /* ... */ }
-  async setRollout(channel, runtimeVersion, platform, updateId, percentage) { /* ... */ }
-  async promoteUpdate(fromChannel, toChannel, runtimeVersion, platform) { /* ... */ }
-  async rollbackUpdate(channel, runtimeVersion, platform) { /* ... */ }
-  async getUpdateHistory(channel, runtimeVersion, platform, limit?) { /* ... */ }
-  async listUpdates() { /* ... */ }
-  async getAssetUrl(hash) { /* ... */ }
-  async storeAsset(hash, data, contentType) { /* ... */ }
+  async getLatestUpdate(channel, runtimeVersion, platform) {
+    /* ... */
+  }
+  async publishUpdate(channel, runtimeVersion, platform, update) {
+    /* ... */
+  }
+  async setRollout(channel, runtimeVersion, platform, updateId, percentage) {
+    /* ... */
+  }
+  async promoteUpdate(fromChannel, toChannel, runtimeVersion, platform) {
+    /* ... */
+  }
+  async rollbackUpdate(channel, runtimeVersion, platform) {
+    /* ... */
+  }
+  async getUpdateHistory(channel, runtimeVersion, platform, limit?) {
+    /* ... */
+  }
+  async listUpdates() {
+    /* ... */
+  }
+  async getAssetUrl(hash) {
+    /* ... */
+  }
+  async storeAsset(hash, data, contentType) {
+    /* ... */
+  }
 }
 ```
 
@@ -399,22 +438,21 @@ Auth behavior:
 
 All admin endpoints require `Authorization: Bearer <token>` when `adminToken` is set.
 
-
-| Method | Path                   | Description                                          |
-| ------ | ---------------------- | ---------------------------------------------------- |
-| `POST` | `/admin/publish`       | Publish an update with manifest + assets             |
-| `POST` | `/admin/promote`       | Copy update from one channel to another              |
-| `POST` | `/admin/rollout`       | Set rollout percentage for an update                 |
-| `POST` | `/admin/rollback`      | Revert to previous update                            |
-| `POST` | `/admin/client-events` | Record trusted client launch/download/apply telemetry |
-| `GET`  | `/admin/health`        | Read per-update crash-rate and timing aggregates     |
-| `GET`  | `/admin/metrics/overview` | Read aggregate event/crash summary                |
-| `GET`  | `/admin/metrics/timings`  | Read check/download/apply timing distributions    |
-| `GET`  | `/admin/metrics/adoption` | Read per-update launch/adoption counters          |
-| `GET`  | `/admin/metrics/failures` | Read per-update failure/error breakdown           |
-| `GET`  | `/admin/metrics/segments` | Read cohort/stage/network/bandwidth/trust slices |
-| `GET`  | `/admin/updates`       | List update history for a channel/rv/platform        |
-| `GET`  | `/admin/status`        | Overview of all deployed updates across all channels |
+| Method | Path                      | Description                                           |
+| ------ | ------------------------- | ----------------------------------------------------- |
+| `POST` | `/admin/publish`          | Publish an update with manifest + assets              |
+| `POST` | `/admin/promote`          | Copy update from one channel to another               |
+| `POST` | `/admin/rollout`          | Set rollout percentage for an update                  |
+| `POST` | `/admin/rollback`         | Revert to previous update                             |
+| `POST` | `/admin/client-events`    | Record trusted client launch/download/apply telemetry |
+| `GET`  | `/admin/health`           | Read per-update crash-rate and timing aggregates      |
+| `GET`  | `/admin/metrics/overview` | Read aggregate event/crash summary                    |
+| `GET`  | `/admin/metrics/timings`  | Read check/download/apply timing distributions        |
+| `GET`  | `/admin/metrics/adoption` | Read per-update launch/adoption counters              |
+| `GET`  | `/admin/metrics/failures` | Read per-update failure/error breakdown               |
+| `GET`  | `/admin/metrics/segments` | Read cohort/stage/network/bandwidth/trust slices      |
+| `GET`  | `/admin/updates`          | List update history for a channel/rv/platform         |
+| `GET`  | `/admin/status`           | Overview of all deployed updates across all channels  |
 
 CLI equivalents:
 
@@ -432,11 +470,9 @@ CLI equivalents:
 - Keep raw, high-volume analytics in your own external sink if needed via
   `onTelemetryBatch`.
 
-
 ## iOS Timing Baseline
 
 From the latest local run (`e2e/ios-ota-report.json`, iPhone 17 Pro simulator):
-
 
 | Step              | Duration   |
 | ----------------- | ---------- |
@@ -448,7 +484,6 @@ From the latest local run (`e2e/ios-ota-report.json`, iPhone 17 Pro simulator):
 | second_launch     | 8.4 s      |
 | third_launch      | 8.4 s      |
 | **total**         | **65.6 s** |
-
 
 Notes:
 

@@ -3,6 +3,7 @@ import { join, resolve } from "path";
 
 const root = resolve(import.meta.dir, "..", "..");
 const fixtureDir = join(root, "e2e", "expo-ota-fixture");
+const fixtureBuildDir = join(fixtureDir, ".airlock-builds");
 const markerFile = join(fixtureDir, "app", "ota-marker.ts");
 const fixtureAppJsonFile = join(fixtureDir, "app.json");
 const bundleId = process.env.AIRLOCK_E2E_BUNDLE_ID ?? "com.dawson.airlockotafixture";
@@ -57,7 +58,7 @@ function run(cmd: string[], cwd = root, env?: Record<string, string>, allowFail 
 async function timeStep<T>(
   timings: Array<{ step: string; ms: number }>,
   step: string,
-  fn: () => Promise<T> | T
+  fn: () => Promise<T> | T,
 ): Promise<T> {
   const start = Date.now();
   const result = await fn();
@@ -80,7 +81,7 @@ async function waitForServer(url: string, timeoutMs = 10_000) {
 }
 
 async function exportAndPublish(marker: string, message: string) {
-  const distDir = join(fixtureDir, `dist-${marker}`);
+  const distDir = join(fixtureBuildDir, `dist-${marker}`);
   await Bun.write(markerFile, `export const OTA_MARKER = "${marker}";\n`);
   setFixtureMarker(marker);
   run(["rm", "-rf", distDir]);
@@ -90,16 +91,12 @@ async function exportAndPublish(marker: string, message: string) {
     {
       EXPO_NO_TELEMETRY: "1",
       CI: "1",
-    }
+    },
   );
-  const expoConfigRaw = run(
-    ["bunx", "expo", "config", "--type", "public", "--json"],
-    fixtureDir,
-    {
-      EXPO_NO_TELEMETRY: "1",
-      CI: "1",
-    }
-  );
+  const expoConfigRaw = run(["bunx", "expo", "config", "--type", "public", "--json"], fixtureDir, {
+    EXPO_NO_TELEMETRY: "1",
+    CI: "1",
+  });
   const expoConfig = JSON.parse(expoConfigRaw);
   await Bun.write(join(distDir, "expoConfig.json"), `${JSON.stringify(expoConfig, null, 2)}\n`);
   run(
@@ -121,7 +118,7 @@ async function exportAndPublish(marker: string, message: string) {
     {
       AIRLOCK_SERVER: `http://127.0.0.1:${port}/ota`,
       AIRLOCK_TOKEN: token,
-    }
+    },
   );
 }
 
@@ -149,7 +146,7 @@ async function buildRelease(marker: string) {
     {
       EXPO_NO_TELEMETRY: "1",
       CI: "1",
-    }
+    },
   );
 }
 
@@ -174,50 +171,46 @@ async function main() {
   const timings: Array<{ step: string; ms: number }> = [];
   const startedAt = new Date().toISOString();
 
-  const serverProc = Bun.spawn(
-    ["bun", "run", "src/e2e/local-server.ts"],
-    {
-      cwd: root,
-      env: {
-        ...process.env,
-        AIRLOCK_E2E_PORT: port,
-        AIRLOCK_E2E_TOKEN: token,
-      },
-      stdout: "inherit",
-      stderr: "inherit",
-    }
-  );
+  const serverProc = Bun.spawn(["bun", "run", "src/e2e/local-server.ts"], {
+    cwd: root,
+    env: {
+      ...process.env,
+      AIRLOCK_E2E_PORT: port,
+      AIRLOCK_E2E_TOKEN: token,
+    },
+    stdout: "inherit",
+    stderr: "inherit",
+  });
 
   try {
     await timeStep(timings, "wait_for_server", () =>
-      waitForServer(`http://127.0.0.1:${port}/health`)
+      waitForServer(`http://127.0.0.1:${port}/health`),
     );
 
-    await timeStep(timings, "export_publish_v1", () =>
-      exportAndPublish("v1", "fixture v1")
-    );
+    await timeStep(timings, "export_publish_v1", () => exportAndPublish("v1", "fixture v1"));
     await timeStep(timings, "build_release_v1", () => buildRelease("v1"));
 
     const firstLaunch = await timeStep(timings, "first_launch", () =>
-      Promise.resolve(launchAndReadStatus())
+      Promise.resolve(launchAndReadStatus()),
     );
     if (firstLaunch.marker !== "v1") {
       throw new Error(`expected first launch marker=v1, got ${firstLaunch.marker}`);
     }
 
-    await timeStep(timings, "export_publish_v2", () =>
-      exportAndPublish("v2", "fixture v2")
-    );
+    await timeStep(timings, "export_publish_v2", () => exportAndPublish("v2", "fixture v2"));
 
     const secondLaunch = await timeStep(timings, "second_launch", () =>
-      Promise.resolve(launchAndReadStatus())
+      Promise.resolve(launchAndReadStatus()),
     );
-    if (secondLaunch.checkResult !== "update-fetched" && secondLaunch.checkResult !== "up-to-date") {
+    if (
+      secondLaunch.checkResult !== "update-fetched" &&
+      secondLaunch.checkResult !== "up-to-date"
+    ) {
       throw new Error(`expected second launch to fetch/update, got ${secondLaunch.checkResult}`);
     }
 
     const thirdLaunch = await timeStep(timings, "third_launch", () =>
-      Promise.resolve(launchAndReadStatus())
+      Promise.resolve(launchAndReadStatus()),
     );
     if (thirdLaunch.marker !== "v2") {
       throw new Error(`expected third launch marker=v2, got ${thirdLaunch.marker}`);
