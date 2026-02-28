@@ -2,9 +2,12 @@ import { Hono } from "hono";
 import type {
   AirlockConfig,
   AirlockEvent,
+  ClientEvent,
   Platform,
   StorageAdapter,
   StoredUpdate,
+  UpdateHealth,
+  UpdateStage,
   UpdateContext,
 } from "./types";
 import {
@@ -82,6 +85,48 @@ function inferBaseFromPath(pathname: string, suffix: string): string {
   return pathname.endsWith(suffix) ? pathname.slice(0, -suffix.length) : "";
 }
 
+function parseNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function matchesTargeting(update: StoredUpdate, ctx: UpdateContext): boolean {
+  const targeting = update.targeting;
+  if (!targeting) return true;
+  if (targeting.cohort && targeting.cohort !== ctx.cohort) return false;
+  if (
+    typeof targeting.minBandwidthKbps === "number" &&
+    (ctx.bandwidthKbps == null || ctx.bandwidthKbps < targeting.minBandwidthKbps)
+  ) {
+    return false;
+  }
+  if (
+    Array.isArray(targeting.allowedStages) &&
+    targeting.allowedStages.length > 0 &&
+    (!ctx.stage || !targeting.allowedStages.includes(ctx.stage))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function isHealthBlocked(
+  updateId: string,
+  health: Map<string, UpdateHealth>,
+  config: AirlockConfig
+): UpdateHealth | null {
+  const autoBlock = config.stability?.autoBlockUnhealthy ?? true;
+  if (!autoBlock) return null;
+  const minLaunches = config.stability?.minLaunchesForBlocking ?? 20;
+  const crashRateThreshold = config.stability?.crashRateThreshold ?? 0.2;
+  const entry = health.get(updateId);
+  if (!entry) return null;
+  if (entry.totalLaunches < minLaunches) return null;
+  if (entry.crashRate < crashRateThreshold) return null;
+  return entry;
+}
+
 export function createAirlock(config: AirlockConfig) {
   const app = new Hono();
 
@@ -107,11 +152,14 @@ export function createAirlock(config: AirlockConfig) {
       );
     }
 
-    const update = await adapter.getLatestUpdate(
-      channel,
-      runtimeVersion,
-      platform
-    );
+    const deviceId =
+      c.req.header("expo-eas-client-id") ??
+      c.req.header("eas-client-id") ??
+      "anonymous";
+
+    const stage = (c.req.header("x-airlock-stage") ?? null) as UpdateStage | null;
+    const cohort = c.req.header("x-airlock-cohort") ?? null;
+    const bandwidthKbps = parseNumber(c.req.header("x-airlock-bandwidth-kbps") ?? undefined);
 
     const ctx: UpdateContext = {
       channel,
@@ -119,35 +167,60 @@ export function createAirlock(config: AirlockConfig) {
       platform,
       headers: Object.fromEntries([...c.req.raw.headers.entries()]),
       currentUpdateId,
+      deviceId,
+      stage,
+      cohort,
+      bandwidthKbps,
     };
+
+    const history = await adapter.getUpdateHistory(
+      channel,
+      runtimeVersion,
+      platform,
+      50
+    );
+    if (!history.length) {
+      emit(config, { type: "manifest_request", context: ctx, served: false });
+      return buildNoUpdateResponse();
+    }
+
+    const healthRows = adapter.getUpdateHealth
+      ? await adapter.getUpdateHealth(channel, runtimeVersion, platform, 100)
+      : [];
+    const healthByUpdate = new Map(healthRows.map((row) => [row.updateId, row]));
+    let update: StoredUpdate | null = null;
+
+    for (const candidate of history) {
+      if (currentUpdateId && candidate.manifest.id === currentUpdateId) continue;
+      if (!matchesTargeting(candidate, ctx)) continue;
+      if (candidate.rolloutPercentage < 100) {
+        const inRollout = await isInRollout(
+          deviceId,
+          candidate.manifest.id,
+          candidate.rolloutPercentage
+        );
+        if (!inRollout) continue;
+      }
+      const blockedHealth = isHealthBlocked(candidate.manifest.id, healthByUpdate, config);
+      if (blockedHealth) {
+        emit(config, {
+          type: "update_auto_blocked",
+          updateId: candidate.manifest.id,
+          channel,
+          runtimeVersion,
+          platform,
+          crashRate: blockedHealth.crashRate,
+          launches: blockedHealth.totalLaunches,
+        });
+        continue;
+      }
+      update = candidate;
+      break;
+    }
 
     if (!update) {
       emit(config, { type: "manifest_request", context: ctx, served: false });
       return buildNoUpdateResponse();
-    }
-
-    // Already on this update
-    if (currentUpdateId && update.manifest.id === currentUpdateId) {
-      emit(config, { type: "manifest_request", context: ctx, served: false });
-      return buildNoUpdateResponse();
-    }
-
-    // Rollout check
-    const deviceId =
-      c.req.header("expo-eas-client-id") ??
-      c.req.header("eas-client-id") ??
-      "anonymous";
-
-    if (update.rolloutPercentage < 100) {
-      const inRollout = await isInRollout(
-        deviceId,
-        update.manifest.id,
-        update.rolloutPercentage
-      );
-      if (!inRollout) {
-        emit(config, { type: "manifest_request", context: ctx, served: false });
-        return buildNoUpdateResponse();
-      }
     }
 
     // resolveUpdate hook
@@ -160,16 +233,22 @@ export function createAirlock(config: AirlockConfig) {
       return buildNoUpdateResponse();
     }
 
-    // Inject critical flag into manifest extra
-    if (resolved.critical) {
-      resolved = {
-        ...resolved,
-        manifest: {
-          ...resolved.manifest,
-          extra: { ...resolved.manifest.extra, critical: true },
-        },
-      };
-    }
+    const extra = {
+      ...resolved.manifest.extra,
+      ...(resolved.critical ? { critical: true } : {}),
+      ...(resolved.kind ? { updateKind: resolved.kind } : {}),
+      ...(resolved.stage ? { updateStage: resolved.stage } : {}),
+      ...(resolved.targeting?.immediateApply
+        ? { immediateApply: resolved.targeting.immediateApply }
+        : {}),
+    };
+    resolved = {
+      ...resolved,
+      manifest: {
+        ...resolved.manifest,
+        extra,
+      },
+    };
 
     const basePath = c.req.header("x-airlock-base-path") ?? "";
     resolved = {
@@ -284,6 +363,10 @@ export function createAirlock(config: AirlockConfig) {
       rolloutPercentage?: number;
       message?: string;
       critical?: boolean;
+      kind?: StoredUpdate["kind"];
+      stage?: StoredUpdate["stage"];
+      tags?: string[];
+      targeting?: StoredUpdate["targeting"];
       assets?: Array<{ hash: string; base64: string; contentType: string }>;
     }>();
 
@@ -318,6 +401,10 @@ export function createAirlock(config: AirlockConfig) {
       rolloutPercentage: pct,
       message: body.message,
       critical: body.critical,
+      kind: body.kind,
+      stage: body.stage,
+      tags: body.tags,
+      targeting: body.targeting,
       createdAt: now,
       updatedAt: now,
     };
@@ -482,6 +569,75 @@ export function createAirlock(config: AirlockConfig) {
     );
 
     return c.json({ updates });
+  });
+
+  // ─── Admin: client telemetry ─────────────────────────────────────
+
+  admin.post("/client-events", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    if (!adapter.recordClientEvents) {
+      return c.json({ error: "Adapter does not support telemetry storage" }, 501);
+    }
+
+    const body = await c.req.json<{
+      events?: ClientEvent[];
+      event?: ClientEvent;
+    }>();
+    const events = body.events ?? (body.event ? [body.event] : []);
+    if (!events.length) {
+      return c.json({ error: "Missing events payload" }, 400);
+    }
+
+    for (const event of events) {
+      if (!event.channel || !event.runtimeVersion || !event.platform || !event.type) {
+        return c.json({ error: "Each event requires channel, runtimeVersion, platform, and type" }, 400);
+      }
+    }
+
+    await adapter.recordClientEvents(
+      events.map((event) => ({
+        ...event,
+        timestamp: event.timestamp ?? new Date().toISOString(),
+      }))
+    );
+
+    const first = events[0];
+    emit(config, {
+      type: "client_events_recorded",
+      count: events.length,
+      channel: first.channel,
+      runtimeVersion: first.runtimeVersion,
+      platform: first.platform,
+    });
+
+    return c.json({ ok: true, count: events.length });
+  });
+
+  admin.get("/health", async (c) => {
+    const adapter = resolveAdapter(config, c.env);
+    const channel = c.req.query("channel") ?? "default";
+    const runtimeVersion = c.req.query("runtimeVersion");
+    const platform = c.req.query("platform") as Platform | undefined;
+    const limit = parseInt(c.req.query("limit") ?? "20");
+
+    if (!runtimeVersion || !platform) {
+      return c.json(
+        { error: "Missing runtimeVersion or platform query param" },
+        400
+      );
+    }
+
+    if (!adapter.getUpdateHealth) {
+      return c.json({ supported: false, health: [] });
+    }
+
+    const health = await adapter.getUpdateHealth(
+      channel,
+      runtimeVersion,
+      platform,
+      limit
+    );
+    return c.json({ supported: true, health });
   });
 
   app.route("/admin", admin);

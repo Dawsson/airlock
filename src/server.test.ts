@@ -57,7 +57,12 @@ function adminRequest(
   });
 }
 
-function extractManifestPart(body: string): { launchAsset: { url: string }; assets: Array<{ url: string }> } {
+function extractManifestPart(body: string): {
+  id: string;
+  launchAsset: { url: string };
+  assets: Array<{ url: string }>;
+  extra: Record<string, unknown>;
+} {
   const marker = 'Content-Disposition: inline; name="manifest"';
   const markerIndex = body.indexOf(marker);
   if (markerIndex === -1) throw new Error("manifest part not found");
@@ -65,8 +70,10 @@ function extractManifestPart(body: string): { launchAsset: { url: string }; asse
   const endBoundary = body.indexOf("\r\n--airlock-boundary", jsonStart);
   if (jsonStart === -1 || endBoundary === -1) throw new Error("manifest JSON body not found");
   return JSON.parse(body.slice(jsonStart, endBoundary)) as {
+    id: string;
     launchAsset: { url: string };
     assets: Array<{ url: string }>;
+    extra: Record<string, unknown>;
   };
 }
 
@@ -178,6 +185,24 @@ describe("airlock", () => {
     expect(body).not.toContain('"critical":true');
   });
 
+  test("update kind/stage/immediateApply are injected into manifest extra", async () => {
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        kind: "emergency",
+        stage: "production",
+        targeting: { immediateApply: "always" },
+      })
+    );
+    const res = await manifestRequest(app);
+    const manifest = extractManifestPart(await res.text());
+    expect(manifest.extra.updateKind).toBe("emergency");
+    expect(manifest.extra.updateStage).toBe("production");
+    expect(manifest.extra.immediateApply).toBe("always");
+  });
+
   // ─── Rollout ─────────────────────────────────────────────────────
 
   test("rollout: 0% excludes all devices", async () => {
@@ -216,6 +241,91 @@ describe("airlock", () => {
       results.push(res.status);
     }
     expect(new Set(results).size).toBe(1);
+  });
+
+  test("cohort targeting serves matching cohort update", async () => {
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "update-a" },
+        targeting: { cohort: "A" },
+      })
+    );
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "update-b" },
+        targeting: { cohort: "B" },
+      })
+    );
+
+    const res = await manifestRequest(app, { "x-airlock-cohort": "A" });
+    expect(res.status).toBe(200);
+    const manifest = extractManifestPart(await res.text());
+    expect(manifest.id).toBe("update-a");
+  });
+
+  test("minimum bandwidth targeting filters updates", async () => {
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "update-fallback" },
+      })
+    );
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "update-high-bandwidth" },
+        targeting: { minBandwidthKbps: 5_000 },
+      })
+    );
+
+    const res = await manifestRequest(app, { "x-airlock-bandwidth-kbps": "500" });
+    expect(res.status).toBe(200);
+    const manifest = extractManifestPart(await res.text());
+    expect(manifest.id).toBe("update-fallback");
+  });
+
+  test("auto-blocks unhealthy update using crash rate telemetry", async () => {
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "stable-update" },
+      })
+    );
+    await adapter.publishUpdate(
+      "default",
+      "1.0.0",
+      "ios",
+      makeUpdate({
+        manifest: { ...makeUpdate().manifest, id: "bad-update" },
+      })
+    );
+    await adapter.recordClientEvents?.(
+      Array.from({ length: 25 }).map((_, index) => ({
+        type: index < 10 ? "launch" : "launch_failed",
+        channel: "default",
+        runtimeVersion: "1.0.0",
+        platform: "ios",
+        updateId: "bad-update",
+      }))
+    );
+
+    const res = await manifestRequest(app);
+    expect(res.status).toBe(200);
+    const manifest = extractManifestPart(await res.text());
+    expect(manifest.id).toBe("stable-update");
+    expect(events.some((e) => e.type === "update_auto_blocked")).toBe(true);
   });
 
   // ─── resolveUpdate hook ──────────────────────────────────────────
@@ -321,6 +431,42 @@ describe("airlock", () => {
     noAuthApp.route("/", airlock.routes);
     const res = await noAuthApp.request("/admin/updates?runtimeVersion=1.0.0&platform=ios");
     expect(res.status).toBe(200);
+  });
+
+  test("client events are accepted and persisted", async () => {
+    const res = await adminRequest(app, "/client-events", {
+      events: [
+        {
+          type: "launch",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "update-1",
+        },
+        {
+          type: "update_applied",
+          channel: "default",
+          runtimeVersion: "1.0.0",
+          platform: "ios",
+          updateId: "update-1",
+          durationMs: 650,
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+
+    const healthRes = await app.request(
+      "/admin/health?runtimeVersion=1.0.0&platform=ios",
+      { headers: { Authorization: "Bearer test-token" } }
+    );
+    expect(healthRes.status).toBe(200);
+    const healthBody = await healthRes.json() as {
+      supported: boolean;
+      health: Array<{ updateId: string; totalLaunches: number; avgApplyMs: number | null }>;
+    };
+    expect(healthBody.supported).toBe(true);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.totalLaunches).toBe(1);
+    expect(healthBody.health.find((h) => h.updateId === "update-1")?.avgApplyMs).toBe(650);
   });
 
   // ─── Admin: publish ──────────────────────────────────────────────

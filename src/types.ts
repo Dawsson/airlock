@@ -18,14 +18,65 @@ export type ExpoManifest = {
   extra: Record<string, unknown>;
 };
 
+export type UpdateKind = "feature" | "optional" | "hotfix" | "emergency";
+export type UpdateStage = "development" | "preview" | "staging" | "production";
+
+export type UpdateTargeting = {
+  /** Optional experiment cohort (e.g. "A", "B", "control") */
+  cohort?: string;
+  /** Minimum estimated bandwidth needed to serve this update */
+  minBandwidthKbps?: number;
+  /** Allowed app stages for this update */
+  allowedStages?: UpdateStage[];
+  /** Hint to client for when to apply fetched update */
+  immediateApply?: "never" | "wifi_only" | "always";
+};
+
 /** A stored update with rollout metadata */
 export type StoredUpdate = {
   manifest: ExpoManifest;
   rolloutPercentage: number;
   message?: string;
   critical?: boolean;
+  kind?: UpdateKind;
+  stage?: UpdateStage;
+  tags?: string[];
+  targeting?: UpdateTargeting;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ClientEventType =
+  | "launch"
+  | "launch_failed"
+  | "update_check"
+  | "update_downloaded"
+  | "update_applied";
+
+export type ClientEvent = {
+  type: ClientEventType;
+  channel: string;
+  runtimeVersion: string;
+  platform: Platform;
+  updateId?: string;
+  deviceId?: string;
+  stage?: UpdateStage;
+  networkType?: "wifi" | "cellular" | "unknown";
+  bandwidthKbps?: number;
+  durationMs?: number;
+  appliedFromEmbedded?: boolean;
+  error?: string;
+  timestamp?: string;
+};
+
+export type UpdateHealth = {
+  updateId: string;
+  totalLaunches: number;
+  failedLaunches: number;
+  crashRate: number;
+  avgDownloadMs: number | null;
+  avgApplyMs: number | null;
+  lastSeenAt: string;
 };
 
 /** Events emitted by the server for analytics/logging */
@@ -40,6 +91,22 @@ export type AirlockEvent =
   | {
       type: "update_published";
       updateId: string;
+      channel: string;
+      runtimeVersion: string;
+      platform: Platform;
+    }
+  | {
+      type: "update_auto_blocked";
+      updateId: string;
+      channel: string;
+      runtimeVersion: string;
+      platform: Platform;
+      crashRate: number;
+      launches: number;
+    }
+  | {
+      type: "client_events_recorded";
+      count: number;
       channel: string;
       runtimeVersion: string;
       platform: Platform;
@@ -62,6 +129,10 @@ export type UpdateContext = {
   platform: Platform;
   headers: Record<string, string>;
   currentUpdateId: string | null;
+  deviceId: string;
+  cohort: string | null;
+  stage: UpdateStage | null;
+  bandwidthKbps: number | null;
 };
 
 /** A single update entry returned by listUpdates() */
@@ -124,6 +195,15 @@ export interface StorageAdapter {
     data: Uint8Array | ReadableStream | ArrayBuffer,
     contentType: string
   ): Promise<string>;
+
+  recordClientEvents?(events: ClientEvent[]): Promise<void>;
+
+  getUpdateHealth?(
+    channel: string,
+    runtimeVersion: string,
+    platform: Platform,
+    limit?: number
+  ): Promise<UpdateHealth[]>;
 }
 
 /** Configuration for createAirlock() */
@@ -149,6 +229,14 @@ export type AirlockConfig = {
     context: UpdateContext
   ) => StoredUpdate | null | Promise<StoredUpdate | null>;
   onEvent?: (event: AirlockEvent) => void | Promise<void>;
+  stability?: {
+    /** Auto-block unhealthy updates from being served (default: true). */
+    autoBlockUnhealthy?: boolean;
+    /** Minimum launches before health gating applies (default: 20). */
+    minLaunchesForBlocking?: number;
+    /** Crash-rate threshold (failed / total) to block (default: 0.2). */
+    crashRateThreshold?: number;
+  };
   signingKey?: CryptoKey;
   signingKeyId?: string;
   certificateChain?: string;
