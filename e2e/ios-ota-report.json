@@ -1,67 +1,103 @@
 {
-  "startedAt": "2026-02-28T17:54:19.868Z",
-  "completedAt": "2026-02-28T17:55:25.516Z",
-  "totalMs": 65647,
+  "startedAt": "2026-02-28T19:11:05.020Z",
+  "completedAt": "2026-02-28T19:12:15.327Z",
+  "totalMs": 70306,
   "timings": [
     {
       "step": "wait_for_server",
-      "ms": 270
+      "ms": 6
     },
     {
       "step": "export_publish_v1",
-      "ms": 6959
+      "ms": 9148
     },
     {
       "step": "build_release_v1",
-      "ms": 25798
+      "ms": 24963
     },
     {
       "step": "first_launch",
-      "ms": 8437
+      "ms": 8454
     },
     {
       "step": "export_publish_v2",
-      "ms": 7341
+      "ms": 10831
     },
     {
       "step": "second_launch",
-      "ms": 8420
+      "ms": 8456
     },
     {
       "step": "third_launch",
-      "ms": 8422
+      "ms": 8448
     }
   ],
   "launches": {
     "first": {
       "marker": "v1",
       "runtimeVersion": "1.0.0",
-      "updateId": "e15cd0be-ec87-46ce-9cd2-a2bf73618a0f",
+      "updateId": "1d9fa515-70b7-4780-be88-fec70fb90a4f",
       "isEmbeddedLaunch": true,
       "checkResult": "up-to-date",
       "fetchedUpdateId": null,
       "error": null,
-      "timestamp": "2026-02-28T17:54:53.779Z"
+      "launchAssetHash": null,
+      "launchAssetUrl": null,
+      "manifestCreatedAt": null,
+      "manifestRawId": "1d9fa515-70b7-4780-be88-fec70fb90a4f",
+      "checkDurationMs": 13,
+      "fetchDurationMs": null,
+      "reloadRequestedAt": null,
+      "logs": [
+        "2026-02-28T19:11:40.696Z check complete: up-to-date in 13ms (updateId=1d9fa515-70b7-4780-be88-fec70fb90a4f)",
+        "2026-02-28T19:11:40.683Z check started",
+        "2026-02-28T19:11:40.665Z launch updateId=1d9fa515-70b7-4780-be88-fec70fb90a4f marker=v1 embedded=true"
+      ],
+      "timestamp": "2026-02-28T19:11:40.696Z"
     },
     "second": {
       "marker": "v2",
       "runtimeVersion": "1.0.0",
-      "updateId": "97d17151-a97a-4523-bbba-56ed8bc7d46f",
+      "updateId": "e631c222-8ad3-47e9-a324-5ae16262079e",
       "isEmbeddedLaunch": false,
       "checkResult": "up-to-date",
       "fetchedUpdateId": null,
       "error": null,
-      "timestamp": "2026-02-28T17:55:09.622Z"
+      "launchAssetHash": "BLh8proXAdRj0UG7jK6Y6GDmENOsI7tYzxmGMOzjLuQ",
+      "launchAssetUrl": "http://127.0.0.1:8788/ota/assets/BLh8proXAdRj0UG7jK6Y6GDmENOsI7tYzxmGMOzjLuQ",
+      "manifestCreatedAt": "2026-02-28T19:11:58.377Z",
+      "manifestRawId": "e631c222-8ad3-47e9-a324-5ae16262079e",
+      "checkDurationMs": 16,
+      "fetchDurationMs": null,
+      "reloadRequestedAt": null,
+      "logs": [
+        "2026-02-28T19:12:00.374Z check complete: up-to-date in 16ms (updateId=e631c222-8ad3-47e9-a324-5ae16262079e)",
+        "2026-02-28T19:12:00.358Z check started",
+        "2026-02-28T19:12:00.351Z launch updateId=e631c222-8ad3-47e9-a324-5ae16262079e marker=v2 embedded=false"
+      ],
+      "timestamp": "2026-02-28T19:12:00.374Z"
     },
     "third": {
       "marker": "v2",
       "runtimeVersion": "1.0.0",
-      "updateId": "97d17151-a97a-4523-bbba-56ed8bc7d46f",
+      "updateId": "e631c222-8ad3-47e9-a324-5ae16262079e",
       "isEmbeddedLaunch": false,
       "checkResult": "up-to-date",
       "fetchedUpdateId": null,
       "error": null,
-      "timestamp": "2026-02-28T17:55:17.941Z"
+      "launchAssetHash": "BLh8proXAdRj0UG7jK6Y6GDmENOsI7tYzxmGMOzjLuQ",
+      "launchAssetUrl": "http://127.0.0.1:8788/ota/assets/BLh8proXAdRj0UG7jK6Y6GDmENOsI7tYzxmGMOzjLuQ",
+      "manifestCreatedAt": "2026-02-28T19:11:58.377Z",
+      "manifestRawId": "e631c222-8ad3-47e9-a324-5ae16262079e",
+      "checkDurationMs": 13,
+      "fetchDurationMs": null,
+      "reloadRequestedAt": null,
+      "logs": [
+        "2026-02-28T19:12:08.455Z check complete: up-to-date in 13ms (updateId=e631c222-8ad3-47e9-a324-5ae16262079e)",
+        "2026-02-28T19:12:08.442Z check started",
+        "2026-02-28T19:12:08.421Z launch updateId=e631c222-8ad3-47e9-a324-5ae16262079e marker=v2 embedded=false"
+      ],
+      "timestamp": "2026-02-28T19:12:08.455Z"
     }
   }
 }
