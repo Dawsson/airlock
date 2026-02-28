@@ -57,6 +57,19 @@ function adminRequest(
   });
 }
 
+function extractManifestPart(body: string): { launchAsset: { url: string }; assets: Array<{ url: string }> } {
+  const marker = 'Content-Disposition: inline; name="manifest"';
+  const markerIndex = body.indexOf(marker);
+  if (markerIndex === -1) throw new Error("manifest part not found");
+  const jsonStart = body.indexOf("{", markerIndex);
+  const endBoundary = body.indexOf("\r\n--airlock-boundary", jsonStart);
+  if (jsonStart === -1 || endBoundary === -1) throw new Error("manifest JSON body not found");
+  return JSON.parse(body.slice(jsonStart, endBoundary)) as {
+    launchAsset: { url: string };
+    assets: Array<{ url: string }>;
+  };
+}
+
 describe("airlock", () => {
   let adapter: MemoryAdapter;
   let app: Hono;
@@ -380,6 +393,50 @@ describe("airlock", () => {
       "expo-eas-client-id": "any-device",
     });
     expect(res.status).toBe(204);
+  });
+
+  test("manifest normalizes legacy _assets URLs to assets/*", async () => {
+    await adminRequest(app, "/publish", {
+      manifest: {
+        ...makeUpdate().manifest,
+        launchAsset: { ...makeUpdate().manifest.launchAsset, url: "_assets/legacy-bundle" },
+        assets: [
+          {
+            ...makeUpdate().manifest.launchAsset,
+            hash: "legacy-asset",
+            url: "_assets/legacy-asset",
+          },
+        ],
+      },
+      runtimeVersion: "1.0.0",
+      platform: "ios",
+    });
+
+    const res = await manifestRequest(app);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const manifest = extractManifestPart(body);
+
+    expect(manifest.launchAsset.url).toBe("assets/abc123");
+    expect(manifest.assets[0].url).toBe("assets/legacy-asset");
+  });
+
+  test("manifest keeps valid asset URLs unchanged", async () => {
+    await adminRequest(app, "/publish", {
+      manifest: {
+        ...makeUpdate().manifest,
+        launchAsset: { ...makeUpdate().manifest.launchAsset, url: "assets/abc123" },
+      },
+      runtimeVersion: "1.0.0",
+      platform: "ios",
+    });
+
+    const res = await manifestRequest(app);
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    const manifest = extractManifestPart(body);
+
+    expect(manifest.launchAsset.url).toBe("assets/abc123");
   });
 
   // ─── Admin: promote ──────────────────────────────────────────────

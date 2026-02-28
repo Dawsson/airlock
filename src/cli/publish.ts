@@ -97,7 +97,7 @@ export async function publish(args: string[]) {
       key: basename(asset.path, ext),
       contentType: guessContentType(ext),
       fileExtension: ext,
-      url: `_assets/${hash}`, // placeholder — server rewrites
+      url: `assets/${hash}`,
     });
   }
 
@@ -113,7 +113,7 @@ export async function publish(args: string[]) {
       key: "bundle",
       contentType: "application/javascript",
       fileExtension: ".js",
-      url: `_assets/${bundleHash}`,
+      url: `assets/${bundleHash}`,
     },
     assets: manifestAssets,
     metadata: {},

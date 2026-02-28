@@ -13,6 +13,7 @@ import {
 } from "./manifest";
 import { isInRollout } from "./rollout";
 import { signManifest } from "./crypto";
+import type { ExpoManifest, ManifestAsset } from "./types";
 
 function emit(config: AirlockConfig, event: AirlockEvent) {
   if (config.onEvent) {
@@ -39,6 +40,21 @@ function requireAuth(adminToken: string | undefined, header: string | undefined)
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
+}
+
+function normalizeAssetUrl(asset: ManifestAsset): ManifestAsset {
+  if (!asset.url || asset.url.startsWith("_assets/") || asset.url.startsWith("/_assets/")) {
+    return { ...asset, url: `assets/${asset.hash}` };
+  }
+  return asset;
+}
+
+function normalizeManifest(manifest: ExpoManifest): ExpoManifest {
+  return {
+    ...manifest,
+    launchAsset: normalizeAssetUrl(manifest.launchAsset),
+    assets: manifest.assets.map(normalizeAssetUrl),
+  };
 }
 
 export function createAirlock(config: AirlockConfig) {
@@ -129,6 +145,11 @@ export function createAirlock(config: AirlockConfig) {
         },
       };
     }
+
+    resolved = {
+      ...resolved,
+      manifest: normalizeManifest(resolved.manifest),
+    };
 
     // Code signing
     let signature: string | undefined;
