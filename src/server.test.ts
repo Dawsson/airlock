@@ -260,7 +260,8 @@ describe("airlock", () => {
   test("asset proxy redirects when asset exists", async () => {
     await adapter.storeAsset("abc123", new Uint8Array([1, 2, 3]), "application/js");
     const res = await app.request("/assets/abc123");
-    expect(res.status).toBe(302);
+    expect(res.status).toBe(200);
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual([1, 2, 3]);
   });
 
   test("asset proxy returns 404 for missing asset", async () => {
@@ -417,8 +418,8 @@ describe("airlock", () => {
     const body = await res.text();
     const manifest = extractManifestPart(body);
 
-    expect(manifest.launchAsset.url).toBe("assets/abc123");
-    expect(manifest.assets[0].url).toBe("assets/legacy-asset");
+    expect(manifest.launchAsset.url).toBe("http://localhost/assets/abc123");
+    expect(manifest.assets[0].url).toBe("http://localhost/assets/legacy-asset");
   });
 
   test("manifest keeps valid asset URLs unchanged", async () => {
@@ -436,7 +437,7 @@ describe("airlock", () => {
     const body = await res.text();
     const manifest = extractManifestPart(body);
 
-    expect(manifest.launchAsset.url).toBe("assets/abc123");
+    expect(manifest.launchAsset.url).toBe("http://localhost/assets/abc123");
   });
 
   // ─── Admin: promote ──────────────────────────────────────────────
@@ -686,7 +687,12 @@ describe("adapter factory", () => {
 describe("mount()", () => {
   test("strips basePath prefix from request URL", async () => {
     const adapter = new MemoryAdapter();
-    await adapter.publishUpdate("default", "1.0.0", "ios", makeUpdate());
+    await adapter.publishUpdate("default", "1.0.0", "ios", makeUpdate({
+      manifest: {
+        ...makeUpdate().manifest,
+        launchAsset: { ...makeUpdate().manifest.launchAsset, url: "_assets/abc123" },
+      },
+    }));
 
     const airlock = createAirlock({ adapter });
     const handler = airlock.mount("/ota");
@@ -700,6 +706,9 @@ describe("mount()", () => {
       })
     );
     expect(res.status).toBe(200);
+    const body = await res.text();
+    const manifest = extractManifestPart(body);
+    expect(manifest.launchAsset.url).toBe("https://api.example.com/ota/assets/abc123");
   });
 
   test("strips basePath with trailing slash", async () => {
@@ -755,6 +764,19 @@ describe("mount()", () => {
       fakeEnv
     );
     expect(envReceived).toBe(fakeEnv);
+  });
+
+  test("asset redirects preserve mount base path for local adapter URLs", async () => {
+    const adapter = new MemoryAdapter();
+    await adapter.storeAsset("abc123", new Uint8Array([1, 2, 3]), "application/octet-stream");
+    const airlock = createAirlock({ adapter });
+    const handler = airlock.mount("/ota");
+
+    const res = await handler(
+      new Request("https://api.example.com/ota/assets/abc123")
+    );
+    expect(res.status).toBe(200);
+    expect(Array.from(new Uint8Array(await res.arrayBuffer()))).toEqual([1, 2, 3]);
   });
 });
 

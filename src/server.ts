@@ -42,19 +42,44 @@ function requireAuth(adminToken: string | undefined, header: string | undefined)
   return diff === 0;
 }
 
-function normalizeAssetUrl(asset: ManifestAsset): ManifestAsset {
-  if (!asset.url || asset.url.startsWith("_assets/") || asset.url.startsWith("/_assets/")) {
-    return { ...asset, url: `assets/${asset.hash}` };
+function normalizeAssetUrl(
+  asset: ManifestAsset,
+  origin: string,
+  basePath: string
+): ManifestAsset {
+  let url = asset.url;
+  if (!url || url.startsWith("_assets/") || url.startsWith("/_assets/")) {
+    url = `assets/${asset.hash}`;
   }
-  return asset;
+  if (/^https?:\/\//i.test(url)) return { ...asset, url };
+
+  // Expo iOS client expects absolute URLs for launch and static assets.
+  const normalizedBase = basePath && basePath !== "/" ? `/${basePath.replace(/^\/+|\/+$/g, "")}` : "";
+  return { ...asset, url: `${origin}${normalizedBase}/assets/${asset.hash}` };
 }
 
-function normalizeManifest(manifest: ExpoManifest): ExpoManifest {
+function normalizeManifest(
+  manifest: ExpoManifest,
+  requestUrl: string,
+  basePath: string
+): ExpoManifest {
+  const url = new URL(requestUrl);
+  const origin = url.origin;
+  const inferredBase = url.pathname.endsWith("/manifest")
+    ? url.pathname.slice(0, -"/manifest".length)
+    : "";
+  const effectiveBasePath = basePath || inferredBase;
   return {
     ...manifest,
-    launchAsset: normalizeAssetUrl(manifest.launchAsset),
-    assets: manifest.assets.map(normalizeAssetUrl),
+    launchAsset: normalizeAssetUrl(manifest.launchAsset, origin, effectiveBasePath),
+    assets: manifest.assets.map((asset) =>
+      normalizeAssetUrl(asset, origin, effectiveBasePath)
+    ),
   };
+}
+
+function inferBaseFromPath(pathname: string, suffix: string): string {
+  return pathname.endsWith(suffix) ? pathname.slice(0, -suffix.length) : "";
 }
 
 export function createAirlock(config: AirlockConfig) {
@@ -146,9 +171,10 @@ export function createAirlock(config: AirlockConfig) {
       };
     }
 
+    const basePath = c.req.header("x-airlock-base-path") ?? "";
     resolved = {
       ...resolved,
-      manifest: normalizeManifest(resolved.manifest),
+      manifest: normalizeManifest(resolved.manifest, c.req.url, basePath),
     };
 
     // Code signing
@@ -179,10 +205,59 @@ export function createAirlock(config: AirlockConfig) {
   app.get("/assets/:hash", async (c) => {
     const adapter = resolveAdapter(config, c.env);
     const hash = c.req.param("hash");
-    const url = await adapter.getAssetUrl(hash);
-    emit(config, { type: "asset_request", hash, found: !!url });
-    if (!url) return c.notFound();
-    return c.redirect(url);
+    const rawUrl = await adapter.getAssetUrl(hash);
+    emit(config, { type: "asset_request", hash, found: !!rawUrl });
+    if (!rawUrl) return c.notFound();
+
+    const requestUrl = new URL(c.req.url);
+    const headerBase = c.req.header("x-airlock-base-path") ?? "";
+    const inferredBase = inferBaseFromPath(requestUrl.pathname, `/assets/${hash}`);
+    const basePath = headerBase || inferredBase;
+    const assetRecord = (
+      adapter as {
+        getAsset?: (assetHash: string) =>
+          | { data: Uint8Array; contentType: string }
+          | null;
+      }
+    ).getAsset?.(hash) ?? null;
+
+    const serveAssetRecord = () =>
+      new Response(assetRecord!.data as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "content-type": assetRecord!.contentType,
+          "cache-control": "public, max-age=31536000, immutable",
+        },
+      });
+
+    // mount("/ota") + MemoryAdapter returns "/assets/:hash"; redirecting would loop.
+    if (headerBase && rawUrl.startsWith("/assets/") && assetRecord) {
+      return serveAssetRecord();
+    }
+
+    let redirectUrl = rawUrl;
+    if (!/^https?:\/\//i.test(redirectUrl)) {
+      if (redirectUrl.startsWith("/assets/") && basePath) {
+        const normalizedBase = `/${basePath.replace(/^\/+|\/+$/g, "")}`;
+        redirectUrl = `${requestUrl.origin}${normalizedBase}${redirectUrl}`;
+      } else if (redirectUrl.startsWith("/")) {
+        redirectUrl = `${requestUrl.origin}${redirectUrl}`;
+      } else {
+        const normalizedBase = basePath
+          ? `/${basePath.replace(/^\/+|\/+$/g, "")}`
+          : "";
+        redirectUrl = `${requestUrl.origin}${normalizedBase}/${redirectUrl.replace(/^\/+/, "")}`;
+      }
+    }
+
+    if (redirectUrl === requestUrl.toString()) {
+      if (assetRecord) {
+        return serveAssetRecord();
+      }
+      return c.notFound();
+    }
+
+    return c.redirect(redirectUrl);
   });
 
   // ─── Admin: middleware ─────────────────────────────────────────────
@@ -438,7 +513,14 @@ export function createAirlock(config: AirlockConfig) {
         if (url.pathname.startsWith(base)) {
           url.pathname = url.pathname.slice(base.length) || "/";
         }
-        return Promise.resolve(app.fetch(new Request(url.toString(), request), env));
+        const headers = new Headers(request.headers);
+        headers.set("x-airlock-base-path", base);
+        return Promise.resolve(app.fetch(new Request(url.toString(), {
+          method: request.method,
+          headers,
+          body: request.body,
+          redirect: request.redirect,
+        }), env));
       };
     },
   };
