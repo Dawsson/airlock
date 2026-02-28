@@ -1,1 +1,1 @@
-export const OTA_MARKER = "v1";
+export const OTA_MARKER = "v4-live";
