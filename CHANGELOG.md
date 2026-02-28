@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## [0.4.1] - 2026-02-28
+
+### Added
+
+- File-backed local adapter (`@dawsson/airlock/adapters/file`) that persists updates, assets, health, and metrics snapshots to JSON on disk for local/dev environments.
+- Optional local e2e server persistence via `AIRLOCK_E2E_STATE_FILE`.
+
+### Changed
+
+- iOS OTA e2e export artifacts now write to `e2e/expo-ota-fixture/.airlock-builds/` and are gitignored to keep the repo clean during iterative publish/test loops.
+
 ## [0.4.0] - 2026-02-28
 
 ### Added

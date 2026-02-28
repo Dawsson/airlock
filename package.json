@@ -1,6 +1,6 @@
 {
   "name": "@dawsson/airlock",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Self-hosted Expo OTA update server — Hono library for Cloudflare Workers",
   "keywords": [
     "cloudflare-workers",
