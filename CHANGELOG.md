@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+## [0.4.0] - 2026-02-28
+
+### Added
+
+- Targeting and rollout controls: cohort targeting, stage targeting, minimum-bandwidth gating, immediate-apply hints, and update kind/stage metadata.
+- Telemetry and stability controls: client telemetry ingestion endpoints, per-update health stats, and automatic unhealthy-update blocking based on crash-rate thresholds.
+- Trust-weighted public telemetry safeguards to prevent untrusted traffic from dominating stability decisions.
+- Local iOS OTA validation workflow with fixture app, deterministic end-to-end OTA loop, and timing report generation.
+- Dashboard-oriented metrics contract:
+  - new authenticated metrics endpoints under `/admin/metrics/*`
+  - extensibility hooks for custom metrics auth (`metricsAuth`) and external telemetry sinks (`onTelemetryBatch`)
+  - in-memory adapter aggregate metrics implementation.
+- New CLI metrics command:
+  - `airlock metrics overview|timings|adoption|failures|segments`
+  - supports human-readable output and `--json`.
+
+### Fixed
+
+- Expo iOS protocol compatibility: multipart close delimiter now includes required trailing CRLF.
+- Manifest/asset integration correctness:
+  - normalized legacy `_assets/*` manifest URLs
+  - fixed mounted asset-path handling
+  - prevented serving older updates when client already runs the latest update.
+
 ## [0.3.0] - 2026-02-18
 
 ### Added
