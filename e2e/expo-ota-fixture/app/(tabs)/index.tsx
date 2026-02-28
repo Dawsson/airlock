@@ -1,98 +1,194 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { useEffect, useMemo, useState } from "react";
+import * as FileSystem from "expo-file-system";
+import * as Updates from "expo-updates";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+type OtaDiagnostics = {
+  marker: string;
+  runtimeVersion: string;
+  updateId: string | null;
+  isEmbeddedLaunch: boolean;
+  checkResult: "idle" | "checking" | "up-to-date" | "update-fetched" | "error";
+  fetchedUpdateId: string | null;
+  error: string | null;
+  timestamp: string;
+};
+
+const STATUS_FILE = `${FileSystem.documentDirectory ?? ""}ota-status.json`;
 
 export default function HomeScreen() {
-  return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+  const marker = useMemo(() => process.env.EXPO_PUBLIC_OTA_MARKER ?? "embedded", []);
+  const [diagnostics, setDiagnostics] = useState<OtaDiagnostics>({
+    marker,
+    runtimeVersion: String(Updates.runtimeVersion ?? "unknown"),
+    updateId: Updates.updateId ?? null,
+    isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+    checkResult: "idle",
+    fetchedUpdateId: null,
+    error: null,
+    timestamp: new Date().toISOString(),
+  });
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+  async function persist(next: OtaDiagnostics) {
+    await FileSystem.writeAsStringAsync(STATUS_FILE, JSON.stringify(next, null, 2));
+  }
+
+  async function runUpdateCheck() {
+    let next: OtaDiagnostics = {
+      ...diagnostics,
+      checkResult: "checking",
+      timestamp: new Date().toISOString(),
+    };
+    setDiagnostics(next);
+
+    try {
+      const check = await Updates.checkForUpdateAsync();
+      if (!check.isAvailable) {
+        next = {
+          ...next,
+          checkResult: "up-to-date",
+          fetchedUpdateId: null,
+          updateId: Updates.updateId ?? null,
+          timestamp: new Date().toISOString(),
+        };
+        setDiagnostics(next);
+        await persist(next);
+        return;
+      }
+
+      const fetched = await Updates.fetchUpdateAsync();
+      const fetchedUpdateId =
+        fetched.manifest && "id" in fetched.manifest
+          ? String(fetched.manifest.id)
+          : null;
+
+      next = {
+        ...next,
+        checkResult: "update-fetched",
+        fetchedUpdateId,
+        updateId: Updates.updateId ?? null,
+        timestamp: new Date().toISOString(),
+      };
+      setDiagnostics(next);
+      await persist(next);
+    } catch (error) {
+      next = {
+        ...next,
+        checkResult: "error",
+        error: error instanceof Error ? error.message : String(error),
+        updateId: Updates.updateId ?? null,
+        timestamp: new Date().toISOString(),
+      };
+      setDiagnostics(next);
+      await persist(next);
+    }
+  }
+
+  useEffect(() => {
+    const initial = {
+      ...diagnostics,
+      timestamp: new Date().toISOString(),
+    };
+    setDiagnostics(initial);
+    persist(initial).catch(() => {});
+    runUpdateCheck().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <ScrollView contentContainerStyle={styles.container}>
+      <Text style={styles.title}>Airlock OTA Fixture</Text>
+      <View style={styles.card}>
+        <Text style={styles.label}>Marker</Text>
+        <Text selectable testID="marker" style={styles.value}>{diagnostics.marker}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Runtime Version</Text>
+        <Text selectable testID="runtime-version" style={styles.value}>{diagnostics.runtimeVersion}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Active Update ID</Text>
+        <Text selectable testID="update-id" style={styles.value}>{diagnostics.updateId ?? "null"}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Embedded Launch</Text>
+        <Text selectable style={styles.value}>{String(diagnostics.isEmbeddedLaunch)}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Check Status</Text>
+        <Text selectable testID="check-status" style={styles.value}>{diagnostics.checkResult}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Fetched Update ID</Text>
+        <Text selectable testID="fetched-update-id" style={styles.value}>
+          {diagnostics.fetchedUpdateId ?? "null"}
+        </Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Last Error</Text>
+        <Text selectable testID="last-error" style={styles.value}>{diagnostics.error ?? "none"}</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.label}>Status File</Text>
+        <Text selectable style={styles.path}>{STATUS_FILE}</Text>
+      </View>
+      <Pressable style={styles.button} onPress={() => runUpdateCheck()}>
+        <Text style={styles.buttonText}>Check/FETCH Update</Text>
+      </Pressable>
+      <Text style={styles.hint}>
+        Restart the app after status says update-fetched to launch the new update.
+      </Text>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  container: {
+    padding: 20,
+    gap: 12,
+    backgroundColor: "#F3F5F8",
+    minHeight: "100%",
   },
-  stepContainer: {
-    gap: 8,
+  title: {
+    fontSize: 28,
+    fontWeight: "700",
+    color: "#13233A",
     marginBottom: 8,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  card: {
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: "#FFFFFF",
+  },
+  label: {
+    fontSize: 12,
+    color: "#506176",
+    textTransform: "uppercase",
+    marginBottom: 4,
+  },
+  value: {
+    fontSize: 14,
+    color: "#0A1A2F",
+    fontWeight: "600",
+  },
+  path: {
+    fontSize: 12,
+    color: "#244B73",
+  },
+  button: {
+    backgroundColor: "#0E5EA8",
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  buttonText: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+    fontSize: 14,
+  },
+  hint: {
+    fontSize: 12,
+    color: "#4D5D70",
   },
 });

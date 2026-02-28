@@ -117,6 +117,62 @@ airlock rollback --platform ios --runtime 1.0.0
 airlock keygen
 ```
 
+## Local iOS OTA Validation
+
+This repo includes a fixture Expo app at `e2e/expo-ota-fixture` and scripts to
+run a full local Airlock OTA loop on iOS simulator.
+
+### Prerequisites
+
+- Xcode + iOS Simulator installed
+- Bun installed
+
+### One-command end-to-end loop
+
+```bash
+bun run e2e:ios-ota
+```
+
+What it does:
+
+1. Starts a local Airlock server on `http://127.0.0.1:8788/ota`
+2. Exports and publishes fixture update `v1`
+3. Builds and installs the fixture app in **Release** on iOS simulator
+4. Launches app and verifies marker `v1`
+5. Exports and publishes fixture update `v2`
+6. Relaunches app to fetch `v2`, then relaunches again to verify `v2` is active
+
+The fixture app writes launch/update diagnostics to:
+
+`<simulator app data>/Documents/ota-status.json`
+
+The e2e script reads this file to assert OTA behavior.
+
+### Run server manually
+
+```bash
+bun run e2e:server
+```
+
+Default local credentials:
+
+- Server: `http://127.0.0.1:8788/ota`
+- Admin token: `local-dev-token`
+
+Override with env vars:
+
+- `AIRLOCK_E2E_PORT`
+- `AIRLOCK_E2E_TOKEN`
+- `AIRLOCK_E2E_SIMULATOR`
+- `AIRLOCK_E2E_BUNDLE_ID`
+- `AIRLOCK_E2E_RUNTIME`
+
+### Troubleshooting
+
+- If updates never apply, verify fixture `runtimeVersion` matches publish `--runtime`.
+- If app cannot fetch assets, ensure manifest asset URLs are `assets/<hash>` (or legacy `_assets/*` that Airlock normalizes).
+- If simulator launch fails, open Xcode once to accept toolchain/license prompts and rerun.
+
 ## Features
 
 - Expo Updates protocol v1 compliant (multipart/mixed manifests)
