@@ -1,11 +1,13 @@
 import { Hono } from "hono";
 import { createAirlock } from "../server";
 import { MemoryAdapter } from "../adapters/memory";
+import { FileAdapter } from "../adapters/file";
 
 const port = Number(process.env.AIRLOCK_E2E_PORT ?? "8788");
 const adminToken = process.env.AIRLOCK_E2E_TOKEN ?? "local-dev-token";
+const stateFile = process.env.AIRLOCK_E2E_STATE_FILE;
 
-const adapter = new MemoryAdapter();
+const adapter = stateFile ? new FileAdapter({ filePath: stateFile }) : new MemoryAdapter();
 const airlock = createAirlock({
   adapter,
   adminToken,
@@ -25,9 +27,10 @@ const server = Bun.serve({
   fetch: app.fetch,
 });
 
-console.log(
-  `[airlock-e2e] running on http://127.0.0.1:${port} (admin token: ${adminToken})`
-);
+console.log(`[airlock-e2e] running on http://127.0.0.1:${port} (admin token: ${adminToken})`);
+if (stateFile) {
+  console.log(`[airlock-e2e] persistence enabled at ${stateFile}`);
+}
 
 process.on("SIGINT", () => {
   server.stop(true);

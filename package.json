@@ -2,23 +2,18 @@
   "name": "@dawsson/airlock",
   "version": "0.4.0",
   "description": "Self-hosted Expo OTA update server — Hono library for Cloudflare Workers",
+  "keywords": [
+    "cloudflare-workers",
+    "expo",
+    "hono",
+    "ota",
+    "react-native",
+    "updates"
+  ],
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/Dawsson/airlock.git"
-  },
-  "keywords": [
-    "expo",
-    "ota",
-    "updates",
-    "react-native",
-    "hono",
-    "cloudflare-workers"
-  ],
-  "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./adapters/memory": "./src/adapters/memory.ts",
-    "./adapters/cloudflare": "./src/adapters/cloudflare.ts"
   },
   "bin": {
     "airlock": "./src/cli.ts"
@@ -26,6 +21,13 @@
   "files": [
     "src"
   ],
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapters/memory": "./src/adapters/memory.ts",
+    "./adapters/file": "./src/adapters/file.ts",
+    "./adapters/cloudflare": "./src/adapters/cloudflare.ts"
+  },
   "scripts": {
     "test": "bun test",
     "typecheck": "bunx tsc --noEmit",
@@ -33,7 +35,6 @@
     "e2e:ios-ota": "bun run src/e2e/ios-ota-loop.ts",
     "e2e:advanced": "bun run src/e2e/advanced-features.ts"
   },
-  "license": "MIT",
   "dependencies": {
     "hono": "^4.7.0"
   },

@@ -18,29 +18,32 @@ function key(channel: string, runtimeVersion: string, platform: Platform) {
   return `${channel}/${runtimeVersion}/${platform}`;
 }
 
+type HealthSample = {
+  totalLaunches: number;
+  failedLaunches: number;
+  trustedLaunches: number;
+  trustedFailedLaunches: number;
+  weightedLaunches: number;
+  weightedFailedLaunches: number;
+  downloadSamples: number;
+  applySamples: number;
+  downloadTotalMs: number;
+  applyTotalMs: number;
+  lastSeenAt: string;
+};
+
+export type MemoryAdapterSnapshot = {
+  updates: Record<string, StoredUpdate[]>;
+  assets: Record<string, { dataBase64: string; contentType: string }>;
+  health: Record<string, Record<string, HealthSample>>;
+  metricsEvents: ClientEvent[];
+};
+
 /** In-memory storage adapter — useful for tests and development */
 export class MemoryAdapter implements StorageAdapter {
   private updates = new Map<string, StoredUpdate[]>();
   private assets = new Map<string, { data: Uint8Array; contentType: string }>();
-  private health = new Map<
-    string,
-    Map<
-      string,
-      {
-        totalLaunches: number;
-        failedLaunches: number;
-        trustedLaunches: number;
-        trustedFailedLaunches: number;
-        weightedLaunches: number;
-        weightedFailedLaunches: number;
-        downloadSamples: number;
-        applySamples: number;
-        downloadTotalMs: number;
-        applyTotalMs: number;
-        lastSeenAt: string;
-      }
-    >
-  >();
+  private health = new Map<string, Map<string, HealthSample>>();
   private metricsEvents: ClientEvent[] = [];
 
   private filterEvents(query: MetricsQuery): ClientEvent[] {
@@ -70,7 +73,8 @@ export class MemoryAdapter implements StorageAdapter {
         p95Ms: null,
       };
     }
-    const at = (ratio: number) => values[Math.min(values.length - 1, Math.floor(values.length * ratio))];
+    const at = (ratio: number) =>
+      values[Math.min(values.length - 1, Math.floor(values.length * ratio))];
     const total = values.reduce((sum, value) => sum + value, 0);
     return {
       count: values.length,
@@ -97,7 +101,7 @@ export class MemoryAdapter implements StorageAdapter {
   async getLatestUpdate(
     channel: string,
     runtimeVersion: string,
-    platform: Platform
+    platform: Platform,
   ): Promise<StoredUpdate | null> {
     const list = this.updates.get(key(channel, runtimeVersion, platform));
     return list?.[0] ?? null;
@@ -107,7 +111,7 @@ export class MemoryAdapter implements StorageAdapter {
     channel: string,
     runtimeVersion: string,
     platform: Platform,
-    update: StoredUpdate
+    update: StoredUpdate,
   ): Promise<void> {
     const k = key(channel, runtimeVersion, platform);
     const list = this.updates.get(k) ?? [];
@@ -120,7 +124,7 @@ export class MemoryAdapter implements StorageAdapter {
     runtimeVersion: string,
     platform: Platform,
     updateId: string,
-    percentage: number
+    percentage: number,
   ): Promise<void> {
     const list = this.updates.get(key(channel, runtimeVersion, platform));
     const update = list?.find((u) => u.manifest.id === updateId);
@@ -134,13 +138,9 @@ export class MemoryAdapter implements StorageAdapter {
     fromChannel: string,
     toChannel: string,
     runtimeVersion: string,
-    platform: Platform
+    platform: Platform,
   ): Promise<void> {
-    const source = await this.getLatestUpdate(
-      fromChannel,
-      runtimeVersion,
-      platform
-    );
+    const source = await this.getLatestUpdate(fromChannel, runtimeVersion, platform);
     if (source) {
       await this.publishUpdate(toChannel, runtimeVersion, platform, {
         ...source,
@@ -153,7 +153,7 @@ export class MemoryAdapter implements StorageAdapter {
   async rollbackUpdate(
     channel: string,
     runtimeVersion: string,
-    platform: Platform
+    platform: Platform,
   ): Promise<StoredUpdate | null> {
     const k = key(channel, runtimeVersion, platform);
     const list = this.updates.get(k) ?? [];
@@ -166,7 +166,7 @@ export class MemoryAdapter implements StorageAdapter {
     channel: string,
     runtimeVersion: string,
     platform: Platform,
-    limit = 20
+    limit = 20,
   ): Promise<StoredUpdate[]> {
     const list = this.updates.get(key(channel, runtimeVersion, platform)) ?? [];
     return list.slice(0, limit);
@@ -189,12 +189,14 @@ export class MemoryAdapter implements StorageAdapter {
   async storeAsset(
     hash: string,
     data: Uint8Array | ReadableStream | ArrayBuffer,
-    contentType: string
+    contentType: string,
   ): Promise<string> {
     const bytes =
       data instanceof Uint8Array
         ? data
-        : new Uint8Array(data instanceof ArrayBuffer ? data : await new Response(data).arrayBuffer());
+        : new Uint8Array(
+            data instanceof ArrayBuffer ? data : await new Response(data).arrayBuffer(),
+          );
     this.assets.set(hash, { data: bytes, contentType });
     return `/assets/${hash}`;
   }
@@ -202,6 +204,48 @@ export class MemoryAdapter implements StorageAdapter {
   /** Test helper: get raw asset data */
   getAsset(hash: string) {
     return this.assets.get(hash) ?? null;
+  }
+
+  snapshot(): MemoryAdapterSnapshot {
+    const updates = Object.fromEntries(this.updates.entries());
+    const assets = Object.fromEntries(
+      [...this.assets.entries()].map(([hash, entry]) => [
+        hash,
+        {
+          dataBase64: Buffer.from(entry.data).toString("base64"),
+          contentType: entry.contentType,
+        },
+      ]),
+    );
+    const health = Object.fromEntries(
+      [...this.health.entries()].map(([k, map]) => [k, Object.fromEntries(map.entries())]),
+    );
+    return {
+      updates,
+      assets,
+      health,
+      metricsEvents: this.metricsEvents,
+    };
+  }
+
+  restore(snapshot: MemoryAdapterSnapshot): void {
+    this.updates = new Map(Object.entries(snapshot.updates ?? {}));
+    this.assets = new Map(
+      Object.entries(snapshot.assets ?? {}).map(([hash, entry]) => [
+        hash,
+        {
+          data: new Uint8Array(Buffer.from(entry.dataBase64, "base64")),
+          contentType: entry.contentType,
+        },
+      ]),
+    );
+    this.health = new Map(
+      Object.entries(snapshot.health ?? {}).map(([k, value]) => [
+        k,
+        new Map(Object.entries(value)),
+      ]),
+    );
+    this.metricsEvents = Array.isArray(snapshot.metricsEvents) ? snapshot.metricsEvents : [];
   }
 
   async recordClientEvents(events: ClientEvent[]): Promise<void> {
@@ -265,7 +309,7 @@ export class MemoryAdapter implements StorageAdapter {
     channel: string,
     runtimeVersion: string,
     platform: Platform,
-    limit = 20
+    limit = 20,
   ): Promise<UpdateHealth[]> {
     const byUpdate = this.health.get(key(channel, runtimeVersion, platform));
     if (!byUpdate) return [];
@@ -279,29 +323,21 @@ export class MemoryAdapter implements StorageAdapter {
         trustedLaunches: stats.trustedLaunches,
         trustedFailedLaunches: stats.trustedFailedLaunches,
         trustedCrashRate:
-          stats.trustedLaunches > 0
-            ? stats.trustedFailedLaunches / stats.trustedLaunches
-            : 0,
+          stats.trustedLaunches > 0 ? stats.trustedFailedLaunches / stats.trustedLaunches : 0,
         weightedLaunches: Number(stats.weightedLaunches.toFixed(3)),
         weightedFailedLaunches: Number(stats.weightedFailedLaunches.toFixed(3)),
         weightedCrashRate:
-          stats.weightedLaunches > 0
-            ? stats.weightedFailedLaunches / stats.weightedLaunches
-            : 0,
+          stats.weightedLaunches > 0 ? stats.weightedFailedLaunches / stats.weightedLaunches : 0,
         avgDownloadMs:
           stats.downloadSamples > 0
             ? Math.round(stats.downloadTotalMs / stats.downloadSamples)
             : null,
         avgApplyMs:
-          stats.applySamples > 0
-            ? Math.round(stats.applyTotalMs / stats.applySamples)
-            : null,
+          stats.applySamples > 0 ? Math.round(stats.applyTotalMs / stats.applySamples) : null,
         lastSeenAt: stats.lastSeenAt,
       });
     }
-    return results
-      .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
-      .slice(0, limit);
+    return results.sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt)).slice(0, limit);
   }
 
   async getMetricsOverview(query: MetricsQuery): Promise<MetricsOverview> {
@@ -309,10 +345,10 @@ export class MemoryAdapter implements StorageAdapter {
     const launches = events.filter((event) => event.type === "launch").length;
     const failedLaunches = events.filter((event) => event.type === "launch_failed").length;
     const trustedLaunches = events.filter(
-      (event) => (event.type === "launch" || event.type === "launch_failed") && !!event.trusted
+      (event) => (event.type === "launch" || event.type === "launch_failed") && !!event.trusted,
     ).length;
     const trustedFailedLaunches = events.filter(
-      (event) => event.type === "launch_failed" && !!event.trusted
+      (event) => event.type === "launch_failed" && !!event.trusted,
     ).length;
     const weightedLaunches = events
       .filter((event) => event.type === "launch" || event.type === "launch_failed")
@@ -331,10 +367,8 @@ export class MemoryAdapter implements StorageAdapter {
       weightedLaunches: Number(weightedLaunches.toFixed(3)),
       weightedFailedLaunches: Number(weightedFailedLaunches.toFixed(3)),
       crashRate: launches + failedLaunches > 0 ? failedLaunches / (launches + failedLaunches) : 0,
-      trustedCrashRate:
-        trustedLaunches > 0 ? trustedFailedLaunches / trustedLaunches : 0,
-      weightedCrashRate:
-        weightedLaunches > 0 ? weightedFailedLaunches / weightedLaunches : 0,
+      trustedCrashRate: trustedLaunches > 0 ? trustedFailedLaunches / trustedLaunches : 0,
+      weightedCrashRate: weightedLaunches > 0 ? weightedFailedLaunches / weightedLaunches : 0,
       byType: MemoryAdapter.countByType(events),
     };
   }
@@ -342,9 +376,15 @@ export class MemoryAdapter implements StorageAdapter {
   async getMetricsTimings(query: MetricsQuery): Promise<MetricsTimings> {
     const events = this.filterEvents(query);
     return {
-      update_check: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_check")),
-      update_downloaded: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_downloaded")),
-      update_applied: MemoryAdapter.summarizeDurations(events.filter((event) => event.type === "update_applied")),
+      update_check: MemoryAdapter.summarizeDurations(
+        events.filter((event) => event.type === "update_check"),
+      ),
+      update_downloaded: MemoryAdapter.summarizeDurations(
+        events.filter((event) => event.type === "update_downloaded"),
+      ),
+      update_applied: MemoryAdapter.summarizeDurations(
+        events.filter((event) => event.type === "update_applied"),
+      ),
     };
   }
 
@@ -352,7 +392,13 @@ export class MemoryAdapter implements StorageAdapter {
     const events = this.filterEvents(query).filter((event) => !!event.updateId);
     const byUpdate = new Map<
       string,
-      { launches: number; failedLaunches: number; embeddedLaunches: number; otaLaunches: number; lastSeenAt: string | null }
+      {
+        launches: number;
+        failedLaunches: number;
+        embeddedLaunches: number;
+        otaLaunches: number;
+        lastSeenAt: string | null;
+      }
     >();
     for (const event of events) {
       const updateId = event.updateId!;
@@ -385,7 +431,10 @@ export class MemoryAdapter implements StorageAdapter {
   async getMetricsFailures(query: MetricsQuery): Promise<MetricsFailures> {
     const events = this.filterEvents(query).filter((event) => !!event.updateId);
     const launchesByUpdate = new Map<string, number>();
-    const failuresByUpdate = new Map<string, { failures: number; byError: Record<string, number> }>();
+    const failuresByUpdate = new Map<
+      string,
+      { failures: number; byError: Record<string, number> }
+    >();
 
     for (const event of events) {
       const updateId = event.updateId!;
@@ -420,7 +469,7 @@ export class MemoryAdapter implements StorageAdapter {
 
   async getMetricsSegments(query: MetricsQuery): Promise<MetricsSegments> {
     const events = this.filterEvents(query).filter(
-      (event) => event.type === "launch" || event.type === "launch_failed"
+      (event) => event.type === "launch" || event.type === "launch_failed",
     );
 
     const build = (keyFor: (event: ClientEvent) => string) => {
