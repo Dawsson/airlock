@@ -1,4 +1,22 @@
 import { Image } from 'expo-image';
+import {
+  BottomSheet,
+  Button as SwiftButton,
+  Group,
+  Host,
+  Text as SwiftText,
+  VStack,
+} from '@expo/ui/swift-ui';
+import {
+  buttonStyle,
+  font,
+  foregroundStyle,
+  glassEffect,
+  padding,
+  presentationDetents,
+  presentationDragIndicator,
+} from '@expo/ui/swift-ui/modifiers';
+import { useState } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 
 import { Collapsible } from '@/components/ui/collapsible';
@@ -10,6 +28,8 @@ import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Fonts } from '@/constants/theme';
 
 export default function TabTwoScreen() {
+  const [isLiquidSheetPresented, setIsLiquidSheetPresented] = useState(false);
+
   return (
     <ParallaxScrollView
       headerBackgroundColor={{ light: '#D0D0D0', dark: '#353636' }}
@@ -31,6 +51,54 @@ export default function TabTwoScreen() {
         </ThemedText>
       </ThemedView>
       <ThemedText>This app includes example code to help you get started.</ThemedText>
+      <Collapsible title="Native SwiftUI Liquid Glass sheet (iOS)">
+        {Platform.OS === 'ios' ? (
+          <Host style={styles.swiftUIHost}>
+            <SwiftButton
+              label="Open Native Liquid Glass Sheet"
+              onPress={() => setIsLiquidSheetPresented(true)}
+              modifiers={[buttonStyle('glassProminent')]}
+            />
+            <BottomSheet
+              isPresented={isLiquidSheetPresented}
+              onIsPresentedChange={setIsLiquidSheetPresented}
+              fitToContents>
+              <Group
+                modifiers={[
+                  presentationDetents([{ fraction: 0.35 }, 'medium', 'large']),
+                  presentationDragIndicator('visible'),
+                  padding({ all: 16 }),
+                  glassEffect({
+                    glass: {
+                      variant: 'regular',
+                      interactive: true,
+                    },
+                    shape: 'roundedRectangle',
+                    cornerRadius: 24,
+                  }),
+                ]}>
+                <VStack spacing={12} alignment="leading">
+                  <SwiftText modifiers={[font({ size: 20, weight: 'semibold', design: 'rounded' })]}>
+                    Liquid Glass Sheet
+                  </SwiftText>
+                  <SwiftText modifiers={[foregroundStyle('#6B7280')]}>
+                    This sheet is rendered natively in SwiftUI via @expo/ui.
+                  </SwiftText>
+                  <SwiftButton
+                    label="Close"
+                    onPress={() => setIsLiquidSheetPresented(false)}
+                    modifiers={[buttonStyle('glass')]}
+                  />
+                </VStack>
+              </Group>
+            </BottomSheet>
+          </Host>
+        ) : (
+          <ThemedText>
+            This demo uses SwiftUI primitives and runs on iOS builds.
+          </ThemedText>
+        )}
+      </Collapsible>
       <Collapsible title="File-based routing">
         <ThemedText>
           This app has two screens:{' '}
@@ -108,5 +176,9 @@ const styles = StyleSheet.create({
   titleContainer: {
     flexDirection: 'row',
     gap: 8,
+  },
+  swiftUIHost: {
+    width: '100%',
+    gap: 12,
   },
 });

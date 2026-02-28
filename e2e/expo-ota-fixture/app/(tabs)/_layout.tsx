@@ -1,35 +1,32 @@
-import { Tabs } from 'expo-router';
+import { NativeTabs } from 'expo-router/unstable-native-tabs';
 import React from 'react';
 
-import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
+  const palette = Colors[colorScheme === 'dark' ? 'dark' : 'light'];
 
   return (
-    <Tabs
-      screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
-        headerShown: false,
-        tabBarButton: HapticTab,
-      }}>
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
-        }}
-      />
-    </Tabs>
+    <NativeTabs
+      tintColor={palette.tint}
+      iconColor={{
+        default: palette.tabIconDefault,
+        selected: palette.tabIconSelected,
+      }}
+      minimizeBehavior="onScrollDown">
+      <NativeTabs.Trigger name="index">
+        <NativeTabs.Trigger.Icon sf={{ default: 'house', selected: 'house.fill' }} />
+        <NativeTabs.Trigger.Label>Home</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+
+      <NativeTabs.Trigger name="explore">
+        <NativeTabs.Trigger.Icon
+          sf={{ default: 'paperplane', selected: 'paperplane.fill' }}
+        />
+        <NativeTabs.Trigger.Label>Explore</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
+    </NativeTabs>
   );
 }
